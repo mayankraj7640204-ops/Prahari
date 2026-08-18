@@ -1,7 +1,8 @@
 import { useRef } from 'react';
 import { Upload } from 'lucide-react';
+import { motion } from 'framer-motion';
 
-export function Hero() {
+export function Hero({ isVisible = true }: { isVisible?: boolean }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleUploadClick = () => {
@@ -10,18 +11,11 @@ export function Hero() {
 
   return (
     <section className="relative min-h-svh w-full overflow-hidden">
-      {/* Background Video (z-0) */}
-      <video
-        src="/background.mp4"
-        autoPlay
-        muted
-        loop
-        playsInline
-        className="absolute inset-0 w-full h-full object-cover z-0"
-      />
-
       {/* Top gradient overlay (z-1) */}
-      <div 
+      <motion.div 
+        initial={{ opacity: 0 }}
+        animate={{ opacity: isVisible ? 1 : 0 }}
+        transition={{ duration: 1.5, delay: 0.2 }}
         className="absolute inset-x-0 top-0 h-[687px] pointer-events-none z-[1]"
         style={{ background: 'linear-gradient(180deg, rgba(255,255,255,1) 0%, rgba(255,255,255,0) 100%)' }}
       />
@@ -30,7 +24,12 @@ export function Hero() {
       <div className="relative z-[2] max-w-[1360px] mx-auto">
         
         {/* Navigation bar */}
-        <nav className="flex items-center justify-between px-6 md:px-20 pt-5 md:pt-6 pb-4">
+        <motion.nav 
+          initial={{ y: -50, opacity: 0 }}
+          animate={isVisible ? { y: 0, opacity: 1 } : {}}
+          transition={{ duration: 0.8, ease: "easeOut", delay: 0.4 }}
+          className="flex items-center justify-between px-6 md:px-20 pt-5 md:pt-6 pb-4"
+        >
           <div className="flex items-center gap-3">
             <img src="/logo.png" alt="Prahari Logo" className="w-10 h-12 object-contain" />
             <span className="font-display text-[32px] md:text-[40px] text-black leading-none select-none mt-1">
@@ -58,19 +57,34 @@ export function Hero() {
               Plan My Trip
             </button>
           </div>
-        </nav>
+        </motion.nav>
 
         {/* Hero body */}
         <div className="flex flex-col items-center px-6 pt-16 pb-24 text-center">
-          <h1 className="font-sans text-[clamp(40px,6vw,68px)] font-medium text-wandor-text leading-[1.05] tracking-[-0.04em] max-w-[820px] mb-5">
+          <motion.h1 
+            initial={{ y: 30, opacity: 0 }}
+            animate={isVisible ? { y: 0, opacity: 1 } : {}}
+            transition={{ duration: 0.8, ease: "easeOut", delay: 0.6 }}
+            className="font-sans text-[clamp(40px,6vw,68px)] font-medium text-wandor-text leading-[1.05] tracking-[-0.04em] max-w-[820px] mb-5"
+          >
             Where will you go next?
-          </h1>
-          <p className="font-sans text-xl font-medium text-wandor-muted leading-relaxed max-w-[500px] mb-10">
+          </motion.h1>
+          <motion.p 
+            initial={{ y: 30, opacity: 0 }}
+            animate={isVisible ? { y: 0, opacity: 1 } : {}}
+            transition={{ duration: 0.8, ease: "easeOut", delay: 0.7 }}
+            className="font-sans text-xl font-medium text-wandor-muted leading-relaxed max-w-[500px] mb-10"
+          >
             Tell our AI where you're going and what you love. We'll create a personalized itinerary for you.
-          </p>
+          </motion.p>
 
           {/* Liquid glass prompt card */}
-          <div className="relative w-full max-w-[calc(100vw-48px)] md:w-[701px] md:max-w-[701px] min-h-[208px] bg-white/[0.06] border-[3px] border-white rounded-[44px] shadow-[0_0_4px_0_rgba(0,0,0,0.15)] overflow-hidden backdrop-blur-[20px] mx-auto">
+          <motion.div 
+            initial={{ y: 40, opacity: 0 }}
+            animate={isVisible ? { y: 0, opacity: 1 } : {}}
+            transition={{ duration: 0.8, ease: "easeOut", delay: 0.8 }}
+            className="relative w-full max-w-[calc(100vw-48px)] md:w-[701px] md:max-w-[701px] min-h-[208px] bg-white/[0.06] border-[3px] border-white rounded-[44px] shadow-[0_0_4px_0_rgba(0,0,0,0.15)] overflow-hidden backdrop-blur-[20px] mx-auto"
+          >
             
             <p className="absolute left-[29px] top-[57px] -translate-y-1/2 w-[calc(100%-58px)] md:w-[609px] text-left font-sans text-[17px] md:text-xl font-medium text-wandor-prompt leading-relaxed break-words">
               I'm planning a 7-day trip to Japan in October. I love food, hidden cafes, scenic hikes, and want to avoid crowds....
@@ -94,7 +108,7 @@ export function Hero() {
             >
               <Upload className="w-[18px] h-[18px] text-wandor-text flex-shrink-0" />
             </button>
-          </div>
+          </motion.div>
         </div>
 
       </div>
