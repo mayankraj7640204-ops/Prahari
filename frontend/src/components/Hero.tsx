@@ -1,6 +1,7 @@
 import { useRef } from 'react';
 import { Upload } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { Link } from 'react-router-dom';
 
 export function Hero({ isVisible = true }: { isVisible?: boolean }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -50,9 +51,9 @@ export function Hero({ isVisible = true }: { isVisible?: boolean }) {
           </div>
           
           <div className="flex items-center gap-8">
-            <button className="hidden md:block bg-transparent border-none cursor-pointer font-sans text-[15px] font-semibold uppercase text-[#292929] tracking-[0.04em] transition-opacity hover:opacity-55">
+            <Link to="/login" className="hidden md:block bg-transparent border-none cursor-pointer font-sans text-[15px] font-semibold uppercase text-[#292929] tracking-[0.04em] transition-opacity hover:opacity-55 no-underline">
               Login
-            </button>
+            </Link>
             <button className="bg-wandor-dark text-[#fafafa] border-none cursor-pointer font-sans text-[15px] font-medium uppercase tracking-[0.04em] px-5 py-3.5 rounded-full transition-all hover:bg-[#333] active:scale-95">
               Plan My Trip
             </button>
