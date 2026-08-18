@@ -1,7 +1,7 @@
 # 🛡️ Prahari | Smart Tourist Safety Monitoring System
 
 <div align="center">
-  <img src="https://img.shields.io/badge/SIH-2024-orange.svg" alt="SIH" />
+  <img src="https://img.shields.io/badge/SIH-2026-orange.svg" alt="SIH" />
   <img src="https://img.shields.io/badge/React-20232A?style=flat&logo=react&logoColor=61DAFB" alt="React" />
   <img src="https://img.shields.io/badge/TypeScript-007ACC?style=flat&logo=typescript&logoColor=white" alt="TypeScript" />
   <img src="https://img.shields.io/badge/Tailwind_CSS-38B2AC?style=flat&logo=tailwind-css&logoColor=white" alt="Tailwind CSS" />
