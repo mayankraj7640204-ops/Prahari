@@ -25,7 +25,7 @@ export function TouristDashboard() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [showTravelForm, setShowTravelForm] = useState(false);
   const [isProcessingAI, setIsProcessingAI] = useState(false);
-  const [enlargedQrHash, setEnlargedQrHash] = useState<string | null>(null);
+  const [enlargedPermit, setEnlargedPermit] = useState<any>(null);
   const [formData, setFormData] = useState({
     name: '',
     passport: '',
@@ -235,22 +235,85 @@ export function TouristDashboard() {
         </div>
       )}
 
-      {enlargedQrHash && (
+      {enlargedPermit && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
-          <div className="bg-white p-8 rounded-3xl shadow-2xl relative animate-in zoom-in-95 duration-200 border border-white/20">
+          <div className="bg-white p-8 rounded-3xl shadow-2xl relative animate-in zoom-in-95 duration-200 border border-black/10 max-w-2xl w-full flex flex-col md:flex-row gap-8 items-center">
             <button 
-              onClick={() => setEnlargedQrHash(null)}
-              className="absolute top-4 right-4 p-2 bg-[#0a0a0a]/5 hover:bg-[#0a0a0a]/10 rounded-full transition-colors"
+              onClick={() => setEnlargedPermit(null)}
+              className="absolute top-4 right-4 p-2 bg-[#0a0a0a]/5 hover:bg-[#0a0a0a]/10 rounded-full transition-colors z-10"
             >
               <X className="w-5 h-5 text-[#0a0a0a]" />
             </button>
-            <h3 className="font-serif text-xl text-center mb-6 text-[#0a0a0a]">Blockchain Digital Pass</h3>
-            <div className="bg-white p-4 rounded-2xl shadow-sm border border-black/5">
-              <QRCode value={enlargedQrHash} size={256} />
+            
+            <div className="flex-shrink-0 flex flex-col items-center">
+              <h3 className="font-serif text-xl text-center mb-4 text-[#0a0a0a] md:hidden">Blockchain Digital Pass</h3>
+              <div className="bg-white p-4 rounded-2xl shadow-sm border border-black/5">
+                <QRCode value={enlargedPermit.blockchain_hash} size={200} />
+              </div>
+              <p className="mt-4 text-center font-mono text-[10px] text-[#0a0a0a]/40 max-w-[200px] break-all uppercase tracking-widest">
+                DID: {enlargedPermit.blockchain_hash}
+              </p>
             </div>
-            <p className="mt-6 text-center font-mono text-xs text-[#0a0a0a]/50 max-w-[256px] break-all">
-              {enlargedQrHash}
-            </p>
+
+            <div className="flex-1 w-full space-y-4">
+              <h3 className="font-serif text-2xl text-[#0a0a0a] hidden md:block border-b border-black/10 pb-4">Digital Identity Record</h3>
+              
+              <div className="grid grid-cols-2 gap-4 pt-2">
+                <div>
+                  <div className="font-mono text-[9px] text-[#0a0a0a]/50 tracking-widest mb-1 uppercase">Tourist Name</div>
+                  <div className="font-sans text-sm font-bold text-[#0a0a0a] uppercase">{tourist?.full_name || 'N/A'}</div>
+                </div>
+                <div>
+                  <div className="font-mono text-[9px] text-[#0a0a0a]/50 tracking-widest mb-1 uppercase">Passport / ID</div>
+                  <div className="font-sans text-sm font-bold text-[#0a0a0a] uppercase">{enlargedPermit.notes?.match(/Passport:\s*([^,]+)/)?.[1] || 'N/A'}</div>
+                </div>
+                <div className="col-span-2">
+                  <div className="font-mono text-[9px] text-[#0a0a0a]/50 tracking-widest mb-1 uppercase">Authorized Zone</div>
+                  <div className="font-sans text-sm font-bold text-[#0a0a0a] uppercase">{enlargedPermit.geo_zones?.name || 'N/A'}</div>
+                </div>
+                <div className="col-span-2">
+                  <div className="font-mono text-[9px] text-[#0a0a0a]/50 tracking-widest mb-1 uppercase">Registered Hotel</div>
+                  <div className="font-sans text-sm font-bold text-[#0a0a0a] uppercase">{enlargedPermit.notes?.match(/Hotel:\s*(.+)$/)?.[1] || 'N/A'}</div>
+                </div>
+                <div className="col-span-2">
+                  <div className="font-mono text-[9px] text-[#0a0a0a]/50 tracking-widest mb-1 uppercase">Validity Period</div>
+                  <div className="font-sans text-sm font-bold text-[#0a0a0a] uppercase">
+                    {new Date(enlargedPermit.valid_from).toLocaleDateString()} - {new Date(enlargedPermit.valid_until).toLocaleDateString()}
+                  </div>
+                </div>
+                <div className="col-span-2 mt-2 flex items-center justify-between">
+                  <span className={cn(
+                    "text-[10px] font-bold tracking-widest uppercase px-3 py-1.5 rounded-full inline-block",
+                    enlargedPermit.status === 'approved' ? "bg-green-100 text-green-700" : "bg-yellow-100 text-yellow-700"
+                  )}>
+                    {enlargedPermit.status === 'pending' ? 'PENDING AUTHORITY APPROVAL' : enlargedPermit.status}
+                  </span>
+                </div>
+                
+                {permits.length > 1 && (
+                  <div className="col-span-2 mt-4 flex items-center justify-between border-t border-black/10 pt-4">
+                    <button 
+                      disabled={permits.findIndex(p => p.id === enlargedPermit.id) <= 0}
+                      onClick={() => setEnlargedPermit(permits[permits.findIndex(p => p.id === enlargedPermit.id) - 1])}
+                      className="text-[10px] font-bold uppercase tracking-widest text-[#0a0a0a]/50 hover:text-[#0a0a0a] disabled:opacity-30 transition-colors"
+                    >
+                      ← Previous
+                    </button>
+                    <span className="text-[10px] font-mono text-[#0a0a0a]/30">
+                      Record {permits.findIndex(p => p.id === enlargedPermit.id) + 1} of {permits.length}
+                    </span>
+                    <button 
+                      disabled={permits.findIndex(p => p.id === enlargedPermit.id) >= permits.length - 1}
+                      onClick={() => setEnlargedPermit(permits[permits.findIndex(p => p.id === enlargedPermit.id) + 1])}
+                      className="text-[10px] font-bold uppercase tracking-widest text-[#0a0a0a]/50 hover:text-[#0a0a0a] disabled:opacity-30 transition-colors"
+                    >
+                      Next →
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+
           </div>
         </div>
       )}
@@ -348,7 +411,18 @@ export function TouristDashboard() {
               <SidebarItem isSidebarOpen={isSidebarOpen} icon={<Activity className="w-4 h-4" />} label="Command Dashboard" active />
               <SidebarItem isSidebarOpen={isSidebarOpen} icon={<Map className="w-4 h-4" />} label="Live Geo-Fence Map" />
               <SidebarItem isSidebarOpen={isSidebarOpen} icon={<Shield className="w-4 h-4" />} label="AI Incident Sentinel" />
-              <SidebarItem isSidebarOpen={isSidebarOpen} icon={<FileText className="w-4 h-4" />} label="Blockchain Digital Pass" onClick={() => document.getElementById('digital-passes')?.scrollIntoView({ behavior: 'smooth' })} />
+              <SidebarItem 
+                isSidebarOpen={isSidebarOpen} 
+                icon={<FileText className="w-4 h-4" />} 
+                label="Blockchain Digital Pass" 
+                onClick={() => {
+                  if (permits && permits.length > 0) {
+                    setEnlargedPermit(permits[0]);
+                  } else {
+                    document.getElementById('digital-passes')?.scrollIntoView({ behavior: 'smooth' });
+                  }
+                }} 
+              />
               <button 
                 onClick={handleSOS}
                 title={!isSidebarOpen ? "Emergency & SOS" : undefined}
@@ -517,8 +591,8 @@ export function TouristDashboard() {
                             {permit.blockchain_hash ? (
                               <div 
                                 className="bg-white p-1 rounded-lg shadow-sm border border-black/5 cursor-pointer hover:shadow-md transition-shadow"
-                                onClick={() => setEnlargedQrHash(permit.blockchain_hash)}
-                                title="Click to enlarge QR Code"
+                                onClick={() => setEnlargedPermit(permit)}
+                                title="Click to enlarge Digital Pass"
                               >
                                 <QRCode value={permit.blockchain_hash} size={64} />
                               </div>
