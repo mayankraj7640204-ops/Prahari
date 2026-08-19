@@ -1,31 +1,99 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
 import { 
-  Shield, MapPin, Activity, AlertTriangle, FileText, Navigation, 
-  CheckCircle, Wifi, QrCode, Power, CloudSun, Leaf, Bell, User, Map, BookOpen, Smartphone, Settings, Menu, X
+  Shield, Activity, AlertTriangle, FileText, Navigation, 
+  CheckCircle, Wifi, QrCode, Power, CloudSun, Leaf, Bell, User, Map, BookOpen, Smartphone, Settings, Menu, X, Crosshair
 } from 'lucide-react';
 import QRCode from 'react-qr-code';
 import SHA256 from 'crypto-js/sha256';
 import { GoogleGenAI } from '@google/genai';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { MapContainer, TileLayer, Marker, Polyline, useMap } from 'react-leaflet';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+
+const createTouristDot = () => L.divIcon({
+  className: 'bg-transparent border-0',
+  html: `<div class="relative"><div class="w-4 h-4 bg-black rounded-full border-2 border-white shadow-lg"></div></div>`,
+  iconSize: [16, 16],
+  iconAnchor: [8, 8]
+});
+
+const createUnitDot = () => L.divIcon({
+  className: 'bg-transparent border-0',
+  html: `<div class="relative"><div class="w-8 h-8 bg-blue-600 rounded-full shadow-[0_0_20px_rgba(37,99,235,0.8)] flex items-center justify-center border-2 border-white animate-bounce"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg></div></div>`,
+  iconSize: [32, 32],
+  iconAnchor: [16, 16]
+});
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+function ChangeView({ center, zoom }: { center: [number, number], zoom: number }) {
+  const map = useMap();
+  useEffect(() => {
+    if (center && center[0] !== 0) {
+      map.flyTo(center, zoom, { animate: true, duration: 1.5 });
+    }
+  }, [center, map, zoom]);
+  return null;
+}
+
+// Component to fix Map resizing bugs
+const MapResizer = () => {
+  const map = useMap();
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      map.invalidateSize();
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [map]);
+  return null;
+};
+
 export function TouristDashboard() {
   const { user } = useAuth();
   const [tourist, setTourist] = useState<any>(null);
   const [permits, setPermits] = useState<any[]>([]);
-  const [isSosActive, setIsSosActive] = useState(false);
+
   const [loading, setLoading] = useState(true);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [showTravelForm, setShowTravelForm] = useState(false);
   const [isProcessingAI, setIsProcessingAI] = useState(false);
   const [enlargedPermit, setEnlargedPermit] = useState<any>(null);
+  
+  // SOS States
+  const [isSosModalOpen, setIsSosModalOpen] = useState(false);
+  const [activeSosAlert, setActiveSosAlert] = useState<any>(null);
+  const [customSosText, setCustomSosText] = useState('');
+  const [emergencyName, setEmergencyName] = useState('');
+  const [emergencyPhone, setEmergencyPhone] = useState('');
+  const [incidentCategory, setIncidentCategory] = useState('Medical Emergency');
+  const [locationName, setLocationName] = useState('Locating...');
+  const [userLocation, setUserLocation] = useState<[number, number]>([25.5788, 91.8933]);
+  const [activeEta, setActiveEta] = useState<number>(15);
+  const isSubmittingRef = useRef(false);
+
+  useEffect(() => {
+    if (activeSosAlert?.status === 'dispatched') {
+      // Calculate initial ETA immediately
+      const match = activeSosAlert.incident_type?.match(/\[DISPATCHED:(\d+)\]/);
+      const start = match ? parseInt(match[1], 10) : new Date(activeSosAlert.created_at).getTime();
+      setActiveEta(Math.max(1, Math.floor(15 - ((Date.now() - start) / 60000))));
+
+      // Update every second
+      const interval = setInterval(() => {
+        const diffMinutes = (Date.now() - start) / 60000;
+        setActiveEta(Math.max(1, Math.floor(15 - diffMinutes)));
+      }, 1000);
+      return () => clearInterval(interval);
+    }
+  }, [activeSosAlert]);
+  
   const [formData, setFormData] = useState({
     name: '',
     passport: '',
@@ -57,14 +125,68 @@ export function TouristDashboard() {
           setPermits(permitsData || []);
         }
       } catch (err) {
-        console.error('Error fetching tourist data', err);
-      } finally {
-        setLoading(false);
+        console.error("Error setting up tourist profile:", err);
       }
+
+      // Fetch live geocoded location
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(async (pos) => {
+          try {
+            setUserLocation([pos.coords.latitude, pos.coords.longitude]);
+            const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${pos.coords.latitude}&lon=${pos.coords.longitude}`);
+            const data = await res.json();
+            const city = data.address?.city || data.address?.town || data.address?.village || data.address?.county || 'Unknown';
+            const state = data.address?.state || '';
+            setLocationName(`${city}${state ? `, ${state}` : ''}`);
+          } catch (err) {
+            console.error("Geocoding failed", err);
+            setLocationName("Location Unknown");
+          }
+        }, () => {
+          setLocationName("GPS Disabled");
+        });
+      } else {
+        setLocationName("GPS Unsupported");
+      }
+      setLoading(false);
     }
 
     fetchData();
   }, [user]);
+
+  useEffect(() => {
+    if (!tourist) return;
+
+    const channel = supabase.channel('tourist-sos-channel')
+      .on('postgres_changes', { 
+        event: '*', 
+        schema: 'public', 
+        table: 'sos_alerts', 
+        filter: `tourist_id=eq.${tourist.id}` 
+      }, (payload) => {
+        if ((payload.new as any).status === 'resolved') {
+          setActiveSosAlert(null);
+          setIsSosModalOpen(false);
+        } else {
+          setActiveSosAlert(payload.new);
+        }
+      })
+      .subscribe();
+      
+    // Fetch initial active alert
+    supabase.from('sos_alerts')
+      .select('*')
+      .eq('tourist_id', tourist.id)
+      .neq('status', 'resolved')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single()
+      .then(({ data }) => setActiveSosAlert(data || null));
+      
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [tourist]);
 
   useEffect(() => {
     async function checkPendingItinerary() {
@@ -184,31 +306,92 @@ export function TouristDashboard() {
     }
   }, [toastMessage]);
 
-  const handleSOS = async () => {
-    if (!tourist) return;
-    if (isSosActive) return;
-
+  const executeSOS = async () => {
+    if (isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
+    
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session || !tourist) {
+      setToastMessage("Authentication lost. Please log in to broadcast SOS.");
+      setIsSosModalOpen(false);
+      isSubmittingRef.current = false;
+      return;
+    }
+    
+    const finalName = emergencyName || tourist.full_name || 'Unknown Tourist';
+    const finalPhone = emergencyPhone || tourist.phone || '';
+    
+    // Upsert tourist name and phone
     try {
-      setIsSosActive(true);
-      const { error } = await supabase
+      await supabase.from('tourists').update({
+        full_name: finalName,
+        phone: finalPhone
+      }).eq('id', tourist.id);
+    } catch (e) {
+      console.warn("Could not update tourist profile", e);
+    }
+
+    // Fetch Geolocation
+    let lat = 25.5788;
+    let lng = 91.8933;
+    
+    try {
+      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000 });
+      });
+      lat = position.coords.latitude;
+      lng = position.coords.longitude;
+    } catch (e) {
+      console.warn("Could not get geolocation, using fallback", e);
+    }
+
+    // Insert SOS Alert
+    try {
+      const { data, error } = await supabase
         .from('sos_alerts')
         .insert({
           tourist_id: tourist.id,
-          latitude: 25.5788,
-          longitude: 91.8933,
-          ai_severity_score: 98,
+          latitude: lat,
+          longitude: lng,
+          ai_severity_score: incidentCategory === 'Medical Emergency' ? 10 : 8,
           status: 'active',
-          incident_type: 'EMERGENCY_BEACON'
-        });
+          incident_type: incidentCategory === 'Custom' ? `CUSTOM: ${customSosText || 'Emergency'}` : incidentCategory
+        })
+        .select()
+        .single();
 
       if (error) {
         console.error('Failed to trigger SOS', error);
-        setIsSosActive(false);
+        setToastMessage("Failed to broadcast SOS.");
+      } else {
+        setActiveSosAlert(data);
       }
     } catch (err) {
       console.error(err);
-      setIsSosActive(false);
+      setToastMessage("Error triggering SOS.");
+    } finally {
+      setIsSosModalOpen(false);
+      isSubmittingRef.current = false;
     }
+  };
+
+  const resolveSOS = async () => {
+    if (!activeSosAlert) return;
+    try {
+      await supabase.from('sos_alerts').update({ status: 'resolved' }).eq('id', activeSosAlert.id);
+      setActiveSosAlert(null);
+    } catch (e) {
+      console.error("Failed to resolve SOS", e);
+    }
+  };
+
+  const handleSOSClick = () => {
+    if (activeSosAlert) return;
+    setEmergencyName(tourist?.full_name === 'New Tourist' ? '' : tourist?.full_name || '');
+    setEmergencyPhone(tourist?.phone || '');
+    setIncidentCategory('Medical Emergency');
+    setCustomSosText('');
+    setIsSosModalOpen(true);
   };
 
   const handleLogout = async () => {
@@ -232,6 +415,177 @@ export function TouristDashboard() {
         <div className="fixed top-24 left-1/2 -translate-x-1/2 bg-[#0a0a0a] text-white px-6 py-3 rounded-full shadow-lg z-[200] text-sm font-medium border border-white/10 flex items-center gap-2 animate-in fade-in slide-in-from-top-4">
           <Shield className="w-4 h-4 text-green-400" />
           {toastMessage}
+        </div>
+      )}
+
+      {/* Active SOS Banner */}
+      {activeSosAlert && (
+        <div className="fixed top-0 left-0 w-full bg-red-600 text-white z-[300] shadow-2xl animate-in slide-in-from-top border-b border-red-500 flex flex-col">
+          <div className="px-4 py-3 flex flex-col md:flex-row items-center justify-between">
+            <div className="flex items-center gap-3 mb-3 md:mb-0">
+              <div className="relative flex h-4 w-4">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-4 w-4 bg-white"></span>
+              </div>
+              <div>
+                <h2 className="font-bold uppercase tracking-widest text-sm md:text-base">SOS ACTIVE - {activeSosAlert.status === 'dispatched' ? 'UNIT EN ROUTE' : 'DISPATCH NOTIFIED'}</h2>
+                <p className="text-xs text-red-100 font-mono">Live Beacon: {activeSosAlert.latitude.toFixed(4)}, {activeSosAlert.longitude.toFixed(4)}</p>
+              </div>
+            </div>
+            <button 
+              onClick={resolveSOS}
+              className="px-4 py-2 bg-white text-red-600 font-bold uppercase tracking-widest text-xs rounded hover:bg-red-50 transition-colors w-full md:w-auto shadow-lg"
+            >
+              Resolve / Cancel Alert
+            </button>
+          </div>
+          
+          <div className="bg-red-950/40 px-4 py-3 border-t border-red-500/30 flex flex-col lg:flex-row gap-6">
+            <div className="flex-1">
+              <h3 className="text-xs font-bold uppercase tracking-widest text-red-200 mb-2">Nearby Safety Crews & Stations</h3>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="bg-black/20 p-2 rounded border border-white/10 flex flex-col justify-between">
+                  <div className="flex justify-between items-start mb-1">
+                    <div className="text-xs font-bold">Local City Police Patrol</div>
+                    <div className="text-[10px] font-mono text-green-400 font-bold tracking-widest">AVAILABLE</div>
+                  </div>
+                  <div className="text-[10px] text-white/60 font-mono mb-1">0.8 km away</div>
+                  <div className="text-[10px] text-yellow-500 font-mono">✆ +91 98765 11111</div>
+                </div>
+                <div className="bg-black/20 p-2 rounded border border-white/10 flex flex-col justify-between">
+                  <div className="flex justify-between items-start mb-1">
+                    <div className="text-xs font-bold">Rapid Medical Responders</div>
+                    <div className="text-[10px] font-mono text-green-400 font-bold tracking-widest">AVAILABLE</div>
+                  </div>
+                  <div className="text-[10px] text-white/60 font-mono mb-1">1.2 km away</div>
+                  <div className="text-[10px] text-yellow-500 font-mono">✆ +91 98765 22222</div>
+                </div>
+                <div className="bg-black/20 p-2 rounded border border-white/10 flex flex-col justify-between">
+                  <div className="flex justify-between items-start mb-1">
+                    <div className="text-xs font-bold">Highway Safety Crew</div>
+                    <div className="text-[10px] font-mono text-green-400 font-bold tracking-widest">AVAILABLE</div>
+                  </div>
+                  <div className="text-[10px] text-white/60 font-mono mb-1">2.5 km away</div>
+                  <div className="text-[10px] text-yellow-500 font-mono">✆ +91 98765 33333</div>
+                </div>
+              </div>
+              {activeSosAlert.status === 'dispatched' && (
+                <div className="mt-3 p-3 bg-yellow-500/20 border border-yellow-500/50 rounded-lg flex items-center gap-3 animate-pulse">
+                  <Crosshair className="w-5 h-5 text-yellow-400" />
+                  <div className="text-sm font-bold text-yellow-100 uppercase tracking-widest">Rescue Team Dispatched and En Route. Estimated ETA: {activeEta} mins.</div>
+                </div>
+              )}
+            </div>
+            
+            {/* Mini Tracking Radar */}
+            <div className="w-full lg:w-48 h-32 lg:h-auto bg-black/50 border border-red-500/20 rounded-lg relative overflow-hidden flex items-center justify-center">
+              <div className="absolute inset-0 bg-[linear-gradient(rgba(255,0,0,0.1)_1px,transparent_1px),linear-gradient(90deg,rgba(255,0,0,0.1)_1px,transparent_1px)] bg-[size:20px_20px]" />
+              <div className="absolute inset-0 bg-[radial-gradient(circle,transparent_20%,rgba(0,0,0,0.8)_100%)]" />
+              
+              {/* Radar Sweep */}
+              <div className="absolute w-full h-full animate-[spin_4s_linear_infinite] origin-center">
+                <div className="w-1/2 h-1/2 border-r-2 border-red-500/50 bg-[conic-gradient(from_0deg,transparent_0deg,rgba(220,38,38,0.2)_90deg)]" />
+              </div>
+              
+              {/* Tourist Dot */}
+              <div className="absolute w-2 h-2 bg-red-500 rounded-full shadow-[0_0_10px_red] z-10" />
+              
+              {/* Rescuer Dot (if dispatched) */}
+              {activeSosAlert.status === 'dispatched' && (
+                <div className="absolute w-3 h-3 bg-yellow-400 rounded-full shadow-[0_0_15px_yellow] z-20 animate-pulse transition-all duration-1000" style={{ top: '20%', left: '20%' }}>
+                  <span className="absolute -top-4 -left-4 text-[8px] font-mono text-yellow-400 whitespace-nowrap">UNIT</span>
+                </div>
+              )}
+              
+              <div className="absolute bottom-1 right-1 text-[8px] text-red-500/50 font-mono z-10">LOCAL RADAR</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SOS Trigger Modal */}
+      {isSosModalOpen && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[250] flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-[#0a0a0a] border border-red-500/30 p-6 md:p-8 rounded-3xl shadow-2xl max-w-md w-full relative">
+            <button 
+              onClick={() => {
+                setIsSosModalOpen(false);
+              }}
+              className="absolute top-4 right-4 p-2 text-white/50 hover:text-white rounded-full transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 bg-red-500/20 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                <AlertTriangle className="w-8 h-8" />
+              </div>
+              <h3 className="font-serif text-2xl text-white">Emergency SOS</h3>
+              <p className="text-white/60 text-sm mt-2">Select the nature of your emergency to notify the nearest command center immediately.</p>
+            </div>
+
+            <div className="flex flex-col gap-4">
+              <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+                <div className="text-[10px] text-white/50 uppercase tracking-widest mb-1">Live Location Preview</div>
+                <div className="text-sm text-white font-mono">{locationName}</div>
+              </div>
+
+              <div>
+                <label className="block text-xs uppercase tracking-widest text-white/60 mb-2">Full Name (Required)</label>
+                <input 
+                  type="text" 
+                  value={emergencyName}
+                  onChange={(e) => setEmergencyName(e.target.value)}
+                  className="w-full bg-[#0a0a0a] border border-white/20 rounded-xl px-4 py-3 text-white placeholder-white/30 focus:outline-none focus:border-red-500 transition-colors"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs uppercase tracking-widest text-white/60 mb-2">Phone Number (Required)</label>
+                <input 
+                  type="text" 
+                  value={emergencyPhone}
+                  onChange={(e) => setEmergencyPhone(e.target.value)}
+                  className="w-full bg-[#0a0a0a] border border-white/20 rounded-xl px-4 py-3 text-white placeholder-white/30 focus:outline-none focus:border-red-500 transition-colors"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs uppercase tracking-widest text-white/60 mb-2">Incident Type</label>
+                <select 
+                  value={incidentCategory}
+                  onChange={(e) => setIncidentCategory(e.target.value)}
+                  className="w-full bg-[#0a0a0a] border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-red-500 transition-colors"
+                >
+                  <option value="Medical Emergency">Medical Emergency</option>
+                  <option value="Route Stranded">Route Stranded</option>
+                  <option value="Threat/Harassment">Threat/Harassment</option>
+                  <option value="Natural Hazard">Natural Hazard</option>
+                  <option value="Custom">Custom Emergency...</option>
+                </select>
+              </div>
+
+              {incidentCategory === 'Custom' && (
+                <div>
+                  <input 
+                    type="text" 
+                    value={customSosText}
+                    onChange={(e) => setCustomSosText(e.target.value)}
+                    placeholder="Describe your emergency..." 
+                    className="w-full bg-[#0a0a0a] border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-red-500 transition-colors"
+                  />
+                </div>
+              )}
+
+              <button 
+                onClick={executeSOS}
+                disabled={!emergencyName.trim() || !emergencyPhone.trim() || (incidentCategory === 'Custom' && !customSosText.trim()) || isSubmittingRef.current}
+                className="mt-4 w-full p-4 bg-red-600 hover:bg-red-500 disabled:bg-red-900 disabled:opacity-50 text-white font-bold uppercase tracking-widest rounded-xl transition-all shadow-[0_0_20px_rgba(220,38,38,0.3)] animate-pulse"
+              >
+                {isSubmittingRef.current ? "Broadcasting..." : "CONFIRM & BROADCAST DISTRESS SIGNAL"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -424,16 +778,15 @@ export function TouristDashboard() {
                 }} 
               />
               <button 
-                onClick={handleSOS}
+                onClick={handleSOSClick}
                 title={!isSidebarOpen ? "Emergency & SOS" : undefined}
                 className={cn(
-                  "flex items-center gap-3 py-3 rounded-lg mx-2 text-sm font-medium transition-colors text-white/70 hover:text-white hover:bg-white/5",
-                  isSosActive && "bg-red-500/20 text-red-300 hover:text-red-300 pointer-events-none",
-                  isSidebarOpen ? "px-4" : "justify-center px-0"
+                  "flex items-center gap-4 px-4 py-3 w-full text-left transition-all duration-300 font-mono text-xs tracking-widest uppercase",
+                  activeSosAlert ? "bg-red-500/20 text-red-300 hover:text-red-300 pointer-events-none" : "text-white/50 hover:bg-white/5 hover:text-white"
                 )}
               >
-                <div className="shrink-0"><AlertTriangle className={cn("w-4 h-4", isSosActive ? "animate-pulse text-red-400" : "")} /></div>
-                {isSidebarOpen && <span className="whitespace-nowrap">{isSosActive ? "SOS Transmitting..." : "Emergency & SOS"}</span>}
+                <div className="shrink-0"><AlertTriangle className={cn("w-4 h-4", activeSosAlert ? "animate-pulse text-red-400" : "")} /></div>
+                {isSidebarOpen && <span className="whitespace-nowrap">{activeSosAlert ? "SOS Transmitting..." : "Emergency & SOS"}</span>}
               </button>
               <SidebarItem isSidebarOpen={isSidebarOpen} icon={<Navigation className="w-4 h-4" />} label="Safe Route Planner" />
               <SidebarItem isSidebarOpen={isSidebarOpen} icon={<Smartphone className="w-4 h-4" />} label="Offline Beacon" />
@@ -476,8 +829,8 @@ export function TouristDashboard() {
           <div className="flex items-center gap-6">
             <div className="flex items-center gap-2 px-4 py-2 bg-white rounded-full border border-black/5 shadow-sm">
               <Navigation className="w-3.5 h-3.5 text-[#0a0a0a]" />
-              <span className="text-xs font-semibold text-[#0a0a0a]">Shillong • Live</span>
-              <div className="w-1.5 h-1.5 bg-green-500 rounded-full ml-1" />
+              <span className="text-xs font-semibold text-[#0a0a0a]">{locationName} • Live</span>
+              <div className="w-1.5 h-1.5 bg-green-500 rounded-full ml-1 animate-pulse" />
             </div>
 
             <button className="w-10 h-10 bg-white rounded-full border border-black/5 flex items-center justify-center shadow-sm text-[#0a0a0a]/60 hover:text-[#0a0a0a]">
@@ -518,26 +871,59 @@ export function TouristDashboard() {
               
               {/* Map View */}
               <div className="lg:col-span-8 bg-white rounded-3xl border border-black/5 shadow-sm overflow-hidden flex flex-col h-[450px]">
-                <div className="px-6 py-5 border-b border-black/5 flex items-center justify-between">
+                <div className="px-6 py-5 border-b border-black/5 flex items-center justify-between z-10 bg-white">
                   <h3 className="font-serif text-lg text-[#0a0a0a]">Live Region Map</h3>
-                  <span className="text-[10px] font-bold tracking-widest uppercase text-[#0a0a0a]/40 bg-[#0a0a0a]/5 px-3 py-1 rounded-full">GPS Synced</span>
+                  <span className="text-[10px] font-bold tracking-widest uppercase text-[#0a0a0a]/40 bg-[#0a0a0a]/5 px-3 py-1 rounded-full flex items-center gap-2">GPS Synced <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"/></span>
                 </div>
-                <div className="flex-1 relative bg-[#F8F9F5]">
-                  {/* Subtle map pattern */}
-                  <div className="absolute inset-0 opacity-10 bg-[radial-gradient(circle_at_center,_#0a0a0a_1px,_transparent_1px)] bg-[size:20px_20px]" />
-                  
-                  {/* Mock Map Element */}
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="relative flex flex-col items-center">
-                      <div className="w-32 h-32 bg-[#f5f5f5] rounded-full animate-ping opacity-50 absolute" />
-                      <div className="w-32 h-32 border border-[#0a0a0a]/20 rounded-full flex items-center justify-center">
-                         <div className="w-4 h-4 bg-[#0a0a0a] rounded-full shadow-lg z-10" />
+                <div className="flex-1 relative z-0">
+                  {/* Floating ETA Badge */}
+                  {activeSosAlert?.status === 'dispatched' && (
+                    <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur-md px-5 py-3 rounded-2xl shadow-[0_10px_40px_rgba(37,99,235,0.3)] border border-blue-500/20 flex flex-col items-center gap-1 z-[400] min-w-[280px] animate-in slide-in-from-top fade-in">
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 bg-blue-600 rounded-full animate-ping" />
+                        <span className="text-xs font-bold text-blue-900 uppercase tracking-widest">Rescue Unit Dispatched</span>
                       </div>
-                      <div className="mt-4 px-4 py-2 bg-white rounded-xl shadow-lg border border-black/5 flex items-center gap-2 z-10">
-                        <MapPin className="w-4 h-4 text-green-600" />
-                        <span className="text-xs font-semibold text-[#0a0a0a]">Green Zone: Sector A</span>
-                      </div>
+                      <div className="text-2xl font-serif text-[#0a0a0a]">Arriving in <span className="text-blue-600">~{activeEta} mins</span></div>
                     </div>
+                  )}
+
+                  <MapContainer 
+                    center={userLocation} 
+                    zoom={14} 
+                    style={{ width: '100%', height: '100%', zIndex: 0 }}
+                    zoomControl={false}
+                    attributionControl={false}
+                  >
+                    <MapResizer />
+                    <ChangeView center={userLocation} zoom={14} />
+                    <TileLayer
+                      url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+                    />
+                    
+                    {/* Tourist Location */}
+                    <Marker position={userLocation} icon={createTouristDot()} />
+
+                    {/* If Dispatched, show Rescuer and Route */}
+                    {activeSosAlert?.status === 'dispatched' && (
+                      <>
+                        <Marker position={[userLocation[0] - 0.015, userLocation[1] - 0.015]} icon={createUnitDot()} />
+                        <Polyline 
+                          positions={[
+                            [userLocation[0] - 0.015, userLocation[1] - 0.015],
+                            userLocation
+                          ]}
+                          color="#2563eb"
+                          weight={4}
+                          dashArray="10, 10"
+                          opacity={0.8}
+                        />
+                      </>
+                    )}
+                  </MapContainer>
+                  
+                  <div className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-white px-4 py-2 rounded-full shadow-[0_0_20px_rgba(0,0,0,0.1)] border border-black/5 flex items-center gap-2 z-[400]">
+                    <Shield className="w-4 h-4 text-green-500" />
+                    <span className="text-xs font-bold text-[#0a0a0a]">Green Zone: Sector A</span>
                   </div>
                 </div>
               </div>

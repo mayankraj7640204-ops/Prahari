@@ -4,9 +4,48 @@ import { Globe, Users, AlertOctagon, FileCheck, ShieldAlert, Crosshair, Check, P
 import { Scanner } from '@yudiel/react-qr-scanner';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+
+const createTouristIcon = (score: number) => L.divIcon({
+  className: 'bg-transparent border-0',
+  html: `<div class="relative"><div class="w-12 h-12 border border-red-500 rounded-full animate-ping absolute -top-5 -left-5"></div><div class="w-2 h-2 bg-red-500 rounded-full shadow-[0_0_10px_rgba(220,38,38,1)]"></div><div class="absolute top-3 left-3 bg-red-950/80 border border-red-500/50 px-2 py-1 font-mono text-[9px] text-red-300 whitespace-nowrap">SOS: ${score}</div></div>`,
+  iconSize: [8, 8],
+  iconAnchor: [4, 4]
+});
+
+const createUnitIcon = (unitName: string, eta: number) => L.divIcon({
+  className: 'bg-transparent border-0',
+  html: `<div class="relative"><div class="w-8 h-8 bg-blue-600 rounded-full shadow-[0_0_20px_rgba(37,99,235,0.8)] flex items-center justify-center border-2 border-white animate-bounce"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg></div><div class="absolute top-8 left-1/2 -translate-x-1/2 bg-blue-950/90 border border-blue-500/50 px-2 py-1 font-mono text-[9px] text-blue-300 whitespace-nowrap z-30 mt-1"><div class="font-bold">${unitName}</div><div>ETA: ${Math.max(1, Math.floor(eta))} mins</div></div></div>`,
+  iconSize: [32, 32],
+  iconAnchor: [16, 16]
+});
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
+}
+
+// Component to fix Map resizing bugs
+const MapResizer = () => {
+  const map = useMap();
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      map.invalidateSize();
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [map]);
+  return null;
+};
+
+function ChangeView({ center, zoom }: { center: [number, number], zoom: number }) {
+  const map = useMap();
+  useEffect(() => {
+    if (center && center[0] !== 0) {
+      map.flyTo(center, zoom, { animate: true, duration: 1.5 });
+    }
+  }, [center, map, zoom]);
+  return null;
 }
 
 export function AdminDashboard() {
@@ -18,17 +57,57 @@ export function AdminDashboard() {
   const [activeScanHash, setActiveScanHash] = useState<string | null>(null);
   const [scannedData, setScannedData] = useState<any>(null);
   const [scanError, setScanError] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Advanced Dispatch States
+  const [isDispatchModalOpen, setIsDispatchModalOpen] = useState(false);
+  const [selectedAlertForDispatch, setSelectedAlertForDispatch] = useState<any>(null);
+  const [activeDispatches, setActiveDispatches] = useState<any[]>([]);
 
   useEffect(() => {
     fetchData();
-    // In a real app, we would set up Supabase realtime subscriptions here
+    
+    const sosChannel = supabase.channel('admin-sos-alerts')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sos_alerts' }, () => {
+        fetchData();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(sosChannel);
+    };
   }, []);
+
+  useEffect(() => {
+    if (toastMessage) {
+      const timer = setTimeout(() => setToastMessage(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [toastMessage]);
+
+  useEffect(() => {
+    if (activeDispatches.length === 0) return;
+    const interval = setInterval(() => {
+      setActiveDispatches(prev => prev.map(d => {
+        // Move slightly towards target
+        const dLat = d.targetLat - d.lat;
+        const dLng = d.targetLng - d.lng;
+        return {
+          ...d,
+          lat: d.lat + (dLat * 0.05),
+          lng: d.lng + (dLng * 0.05),
+          eta: Math.max(1, d.eta - 0.2)
+        };
+      }));
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [activeDispatches]);
 
   const fetchData = async () => {
     try {
       // Fetch stats
       const { count: touristCount } = await supabase.from('tourists').select('*', { count: 'exact', head: true });
-      const { count: sosCount } = await supabase.from('sos_alerts').select('*', { count: 'exact', head: true }).eq('status', 'active');
+      const { count: sosCount } = await supabase.from('sos_alerts').select('*', { count: 'exact', head: true }).neq('status', 'resolved');
       const { count: ilpCount } = await supabase.from('ilp_permits').select('*', { count: 'exact', head: true }).eq('status', 'pending');
 
       setStats({
@@ -41,10 +120,35 @@ export function AdminDashboard() {
       const { data: alertsData } = await supabase
         .from('sos_alerts')
         .select('*, tourists(full_name, phone)')
-        .eq('status', 'active')
+        .neq('status', 'resolved')
+        .order('created_at', { ascending: false })
         .order('ai_severity_score', { ascending: false });
       
-      setAlerts(alertsData || []);
+      const uniqueAlerts = Array.from(new Map((alertsData || []).map((item: any) => [item.id, item])).values());
+      setAlerts(uniqueAlerts);
+
+      // Rehydrate active trackers for already dispatched units
+      setActiveDispatches(prev => {
+        const newDispatches = [...prev];
+        for (const alert of uniqueAlerts) {
+          if (alert.status === 'dispatched' && !newDispatches.some(d => d.alertId === alert.id)) {
+            const match = alert.incident_type?.match(/\[DISPATCHED:(\d+)\]/);
+            const start = match ? parseInt(match[1], 10) : new Date(alert.created_at).getTime();
+            const initialEta = Math.max(1, 15 - ((Date.now() - start) / 60000));
+
+            newDispatches.push({
+              alertId: alert.id,
+              unitName: 'RESCUE UNIT',
+              lat: alert.latitude - 0.015,
+              lng: alert.longitude - 0.015,
+              targetLat: alert.latitude,
+              targetLng: alert.longitude,
+              eta: initialEta
+            });
+          }
+        }
+        return newDispatches;
+      });
 
       // Fetch Permits
       const { data: permitsData } = await supabase
@@ -61,12 +165,63 @@ export function AdminDashboard() {
     }
   };
 
-  const dispatchUnit = async (id: string) => {
+  const dispatchUnit = (alert: any) => {
+    setSelectedAlertForDispatch(alert);
+    setIsDispatchModalOpen(true);
+  };
+
+  const confirmDispatch = async (unitName: string) => {
+    if (!selectedAlertForDispatch) return;
+    const alertId = selectedAlertForDispatch.id;
     try {
-      await supabase.from('sos_alerts').update({ status: 'dispatched' }).eq('id', id);
-      fetchData(); // Refresh
-    } catch (err) {
+      const dispatchTimestamp = Date.now();
+      const updatedIncident = `${selectedAlertForDispatch.incident_type} [DISPATCHED:${dispatchTimestamp}]`;
+      const { error } = await supabase.from('sos_alerts').update({ 
+        status: 'dispatched',
+        incident_type: updatedIncident 
+      }).eq('id', alertId);
+      
+      if (error) {
+        console.error('Failed to dispatch unit', error);
+        setToastMessage(`Dispatch Failed: ${error.message}`);
+        return;
+      }
+      
+      // Add to simulated active dispatches
+      setActiveDispatches(prev => [...prev, {
+        alertId,
+        unitName,
+        lat: selectedAlertForDispatch.latitude - 0.015,
+        lng: selectedAlertForDispatch.longitude - 0.015,
+        targetLat: selectedAlertForDispatch.latitude,
+        targetLng: selectedAlertForDispatch.longitude,
+        eta: 15
+      }]);
+      
+      setToastMessage(`Unit ${unitName} dispatched successfully.`);
+    } catch (err: any) {
       console.error('Failed to dispatch unit', err);
+      setToastMessage(`Dispatch Error: ${err.message || String(err)}`);
+    } finally {
+      setIsDispatchModalOpen(false);
+      setSelectedAlertForDispatch(null);
+    }
+  };
+
+  const resolveSOS = async (id: string) => {
+    try {
+      const { error } = await supabase.from('sos_alerts').update({ status: 'resolved' }).eq('id', id);
+      if (error) {
+        console.error('Failed to resolve SOS', error);
+        setToastMessage(`Resolve Failed: ${error.message}`);
+        return;
+      }
+      setActiveDispatches(prev => prev.filter(d => d.alertId !== id));
+      setAlerts(prev => prev.filter(a => a.id !== id));
+      setToastMessage("Incident marked as resolved.");
+    } catch (err: any) {
+      console.error('Failed to resolve SOS', err);
+      setToastMessage(`Resolve Error: ${err.message || String(err)}`);
     }
   };
 
@@ -169,39 +324,66 @@ export function AdminDashboard() {
           {/* Metrics Grid */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <MacroMetric title="Total Active Tourists" value={stats.tourists.toString()} icon={<Users className="w-5 h-5 text-white/50" />} />
-            <MacroMetric title="Active SOS Pings" value={stats.sos.toString()} icon={<AlertOctagon className="w-5 h-5 text-red-500" />} highlight="border-t-red-500" />
+            <MacroMetric title="Active SOS Pings" value={stats.sos.toString()} icon={<AlertOctagon className={cn("w-5 h-5", stats.sos > 0 ? "text-red-500 animate-pulse" : "text-white/50")} />} highlight={stats.sos > 0 ? "border-t-red-500" : "border-t-white/10"} />
             <MacroMetric title="Pending ILP Approvals" value={stats.ilp.toString()} icon={<FileCheck className="w-5 h-5 text-yellow-500" />} highlight="border-t-yellow-500" />
           </div>
 
           {/* Macro Map */}
-          <div className="flex-1 min-h-[400px] lg:min-h-[500px] bg-[#050505] border border-white/20 relative overflow-hidden flex flex-col">
-            <div className="absolute top-4 left-4 z-10 px-4 py-2 bg-black border border-white/20 font-sans text-xs font-semibold text-white tracking-[0.15em] uppercase">
+          <div className="flex-1 min-h-[400px] lg:min-h-[500px] bg-[#050505] border border-white/20 relative overflow-hidden flex flex-col z-0">
+            <div className="absolute top-4 left-4 z-[400] px-4 py-2 bg-black border border-white/20 font-sans text-xs font-semibold text-white tracking-[0.15em] uppercase">
               NER Sector Map
             </div>
             
-            {/* Map Placeholder Grid */}
-            <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.03)_1px,transparent_1px)] bg-[size:40px_40px]" />
-            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(0,0,0,0)_0%,rgba(0,0,0,0.8)_100%)] pointer-events-none" />
-            
-            {/* Mock Data Points */}
-            {alerts.map((alert, idx) => (
-              <div 
-                key={alert.id}
-                className="absolute"
-                style={{ 
-                  top: `${30 + (idx * 15)}%`, 
-                  left: `${40 + (idx * 10)}%` 
-                }}
-              >
-                <div className="relative">
-                  <div className="w-12 h-12 border border-red-500 rounded-full animate-ping absolute -top-5 -left-5" />
-                  <div className="w-2 h-2 bg-red-500 rounded-full shadow-[0_0_10px_rgba(220,38,38,1)]" />
-                  <div className="absolute top-3 left-3 bg-red-950/80 border border-red-500/50 px-2 py-1 font-mono text-[9px] text-red-300 whitespace-nowrap">
-                    SOS: {alert.ai_severity_score}
-                  </div>
+            <MapContainer 
+              center={alerts.length > 0 ? [alerts[0].latitude, alerts[0].longitude] : [25.5788, 91.8933]} 
+              zoom={7} 
+              style={{ width: '100%', height: '100%', zIndex: 0 }}
+              zoomControl={false}
+              attributionControl={false}
+            >
+              <MapResizer />
+              <ChangeView center={alerts.length > 0 ? [alerts[0].latitude, alerts[0].longitude] : [25.5788, 91.8933]} zoom={alerts.length > 0 ? 12 : 7} />
+              <TileLayer
+                url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+                attribution="&copy; OpenStreetMap contributors &copy; CARTO"
+              />
+              
+              {/* Plot SOS Alerts */}
+              {alerts.map((alert) => (
+                <Marker 
+                  key={alert.id} 
+                  position={[alert.latitude, alert.longitude]} 
+                  icon={createTouristIcon(alert.ai_severity_score)}
+                >
+                  <Popup className="custom-popup">
+                    <div className="font-mono text-xs">
+                      <strong>Tourist:</strong> {alert.tourists?.full_name || 'Unknown'}<br/>
+                      <strong>Score:</strong> {alert.ai_severity_score}/10
+                    </div>
+                  </Popup>
+                </Marker>
+              ))}
+
+              {/* Plot Dispatched Units and Polylines */}
+              {activeDispatches.map((dispatch) => (
+                <div key={`dispatch-group-${dispatch.alertId}`}>
+                  <Marker 
+                    position={[dispatch.lat, dispatch.lng]} 
+                    icon={createUnitIcon(dispatch.unitName, dispatch.eta)}
+                  />
+                  <Polyline 
+                    positions={[
+                      [dispatch.lat, dispatch.lng],
+                      [dispatch.targetLat, dispatch.targetLng]
+                    ]}
+                    color="#2563eb"
+                    weight={4}
+                    dashArray="10, 10"
+                    opacity={0.7}
+                  />
                 </div>
-              </div>
-            ))}
+              ))}
+            </MapContainer>
           </div>
 
         </div>
@@ -221,31 +403,69 @@ export function AdminDashboard() {
               {alerts.length === 0 ? (
                 <EmptyState icon={<Shield className="w-6 h-6" />} msg="No Active Incidents" />
               ) : (
-                alerts.map(alert => (
-                  <div key={alert.id} className="border border-red-500/30 bg-red-950/10 p-4">
+                alerts.map(alert => {
+                  const isDispatched = alert.status === 'dispatched';
+                  const timeAgo = Math.floor((Date.now() - new Date(alert.created_at).getTime()) / 60000);
+                  
+                  const nameMatch = alert.incident_type?.match(/\[NAME: (.*?)\]/);
+                  const displayTouristName = nameMatch ? nameMatch[1] : (alert.tourists?.full_name || 'Unknown');
+                  const displayIncidentType = alert.incident_type?.replace(/\[NAME: .*?\]\s*/, '') || alert.incident_type;
+                  
+                  return (
+                  <div key={alert.id} className={cn("border p-4 transition-colors", isDispatched ? "border-yellow-500/50 bg-yellow-950/10" : "border-red-500/30 bg-red-950/10")}>
                     <div className="flex justify-between items-start mb-3">
                       <div>
-                        <div className="font-mono text-[10px] text-red-400 tracking-wider mb-1">SCORE: {alert.ai_severity_score}/100</div>
-                        <div className="font-sans text-sm font-bold text-white uppercase">{alert.tourists?.full_name || 'Unknown'}</div>
+                        <div className="flex items-center gap-2 mb-1">
+                          <div className={cn("font-mono text-[10px] tracking-wider", isDispatched ? "text-yellow-400" : "text-red-400")}>
+                            {isDispatched ? 'UNIT EN ROUTE' : `SCORE: ${alert.ai_severity_score}/10`}
+                          </div>
+                          <div className="font-mono text-[9px] text-white/40">{timeAgo === 0 ? 'Just now' : `${timeAgo}m ago`}</div>
+                        </div>
+                        <div className="font-sans text-sm font-bold text-white uppercase">{displayTouristName}</div>
+                        <div className="font-mono text-[10px] text-white/60 mt-1 flex items-center gap-2">
+                          <span>Phone: {alert.tourists?.phone || 'N/A'}</span>
+                        </div>
                       </div>
-                      <div className="px-2 py-1 bg-red-500/20 border border-red-500/50 font-mono text-[9px] text-red-400 uppercase">
-                        {alert.incident_type}
+                      <div className={cn("px-2 py-1 font-mono text-[9px] uppercase border", isDispatched ? "bg-yellow-500/20 border-yellow-500/50 text-yellow-400" : "bg-red-500/20 border-red-500/50 text-red-400")}>
+                        {displayIncidentType}
                       </div>
                     </div>
-                    <div className="flex items-center justify-between mt-4 pt-3 border-t border-red-500/20">
-                      <div className="font-mono text-[9px] text-white/40">
-                        {alert.latitude.toFixed(4)}, {alert.longitude.toFixed(4)}
-                      </div>
-                      <button 
-                        onClick={() => dispatchUnit(alert.id)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-500 transition-colors font-sans text-[10px] font-bold uppercase tracking-widest text-white"
+                    <div className={cn("flex items-center justify-between mt-4 pt-3 border-t", isDispatched ? "border-yellow-500/20" : "border-red-500/20")}>
+                      <a 
+                        href={`https://maps.google.com/?q=${alert.latitude},${alert.longitude}`}
+                        target="_blank" rel="noreferrer"
+                        className="font-mono text-[9px] text-blue-400 hover:text-blue-300 underline"
                       >
-                        <Crosshair className="w-3 h-3" />
-                        Dispatch
-                      </button>
+                        {alert.latitude.toFixed(4)}, {alert.longitude.toFixed(4)}
+                      </a>
+                      <div className="flex items-center gap-2">
+                        <button 
+                          onClick={() => resolveSOS(alert.id)}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0a0a0a] border border-white/20 hover:border-white/50 transition-colors font-sans text-[10px] font-bold uppercase tracking-widest text-white"
+                        >
+                          Resolve
+                        </button>
+                        {isDispatched ? (
+                          <button 
+                            disabled
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-yellow-600/20 border border-yellow-500/30 cursor-not-allowed font-sans text-[10px] font-bold uppercase tracking-widest text-yellow-500/50"
+                          >
+                            <Check className="w-3 h-3" />
+                            Deployed
+                          </button>
+                        ) : (
+                          <button 
+                            onClick={() => dispatchUnit(alert)}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-500 transition-colors font-sans text-[10px] font-bold uppercase tracking-widest text-white"
+                          >
+                            <Crosshair className="w-3 h-3" />
+                            Dispatch
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
-                ))
+                )})
               )}
             </div>
           </div>
@@ -377,6 +597,46 @@ export function AdminDashboard() {
               
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Dispatch Modal */}
+      {isDispatchModalOpen && selectedAlertForDispatch && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4">
+          <div className="bg-[#050505] border border-red-500/30 p-6 md:p-8 w-full max-w-lg relative animate-in zoom-in-95 shadow-[0_0_50px_rgba(220,38,38,0.1)]">
+            <button 
+              onClick={() => { setIsDispatchModalOpen(false); setSelectedAlertForDispatch(null); }}
+              className="absolute top-4 right-4 text-white/50 hover:text-white"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <div className="flex items-center gap-3 mb-6 border-b border-red-500/20 pb-4">
+              <Crosshair className="w-6 h-6 text-red-500" />
+              <h2 className="font-sans font-bold text-lg text-white uppercase tracking-widest">Select Dispatch Unit</h2>
+            </div>
+            
+            <div className="space-y-3">
+              <button onClick={() => confirmDispatch('Local City Police Patrol')} className="w-full text-left p-4 border border-white/10 hover:border-red-500/50 bg-[#0a0a0a] hover:bg-red-500/10 transition-colors flex justify-between items-center group">
+                <span className="font-mono text-sm text-white uppercase">Local City Police Patrol</span>
+                <span className="font-mono text-[10px] text-red-500/50 group-hover:text-red-500 tracking-widest uppercase">Available</span>
+              </button>
+              <button onClick={() => confirmDispatch('Rapid Medical Responders')} className="w-full text-left p-4 border border-white/10 hover:border-red-500/50 bg-[#0a0a0a] hover:bg-red-500/10 transition-colors flex justify-between items-center group">
+                <span className="font-mono text-sm text-white uppercase">Rapid Medical Responders</span>
+                <span className="font-mono text-[10px] text-red-500/50 group-hover:text-red-500 tracking-widest uppercase">Available</span>
+              </button>
+              <button onClick={() => confirmDispatch('Highway Safety Crew')} className="w-full text-left p-4 border border-white/10 hover:border-red-500/50 bg-[#0a0a0a] hover:bg-red-500/10 transition-colors flex justify-between items-center group">
+                <span className="font-mono text-sm text-white uppercase">Highway Safety Crew</span>
+                <span className="font-mono text-[10px] text-yellow-500 tracking-widest uppercase">Fastest ETA</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {toastMessage && (
+        <div className="fixed top-8 left-1/2 -translate-x-1/2 bg-[#0a0a0a] border border-white/20 text-white px-6 py-3 shadow-2xl z-[200] font-mono text-xs tracking-widest uppercase flex items-center gap-3">
+          <AlertOctagon className="w-4 h-4 text-red-500" />
+          {toastMessage}
         </div>
       )}
 
