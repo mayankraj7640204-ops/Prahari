@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Globe, Users, AlertOctagon, FileCheck, ShieldAlert, Crosshair, Check, Power, Shield } from 'lucide-react';
+import { Globe, Users, AlertOctagon, FileCheck, ShieldAlert, Crosshair, Check, Power, Shield, ScanLine, Scan, X } from 'lucide-react';
+import { Scanner } from '@yudiel/react-qr-scanner';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -13,6 +14,10 @@ export function AdminDashboard() {
   const [alerts, setAlerts] = useState<any[]>([]);
   const [permits, setPermits] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  
+  const [activeScanHash, setActiveScanHash] = useState<string | null>(null);
+  const [scannedData, setScannedData] = useState<any>(null);
+  const [scanError, setScanError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchData();
@@ -65,17 +70,49 @@ export function AdminDashboard() {
     }
   };
 
-  const approvePermit = async (id: string) => {
-    try {
-      await supabase.from('ilp_permits').update({ status: 'approved' }).eq('id', id);
-      fetchData(); // Refresh
-    } catch (err) {
-      console.error('Failed to approve permit', err);
-    }
-  };
+
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
+  };
+
+  const handleScan = async (result: string) => {
+    try {
+      if (result !== activeScanHash) {
+        setScanError("MISMATCHED PERMIT / FORGERY DETECTED");
+        setScannedData(null);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('ilp_permits')
+        .select('*, tourists(full_name), geo_zones(name)')
+        .eq('blockchain_hash', result)
+        .single();
+
+      if (error || !data) {
+        setScanError("INVALID ID / FORGERY DETECTED");
+        setScannedData(null);
+      } else {
+        setScanError(null);
+        setScannedData(data);
+      }
+    } catch (err) {
+      setScanError("INVALID ID / FORGERY DETECTED");
+      setScannedData(null);
+    }
+  };
+
+  const confirmAndApprove = async () => {
+    if (!scannedData) return;
+    try {
+      await supabase.from('ilp_permits').update({ status: 'approved' }).eq('id', scannedData.id);
+      setActiveScanHash(null);
+      setScannedData(null);
+      fetchData();
+    } catch (err) {
+      console.error('Failed to approve pass', err);
+    }
   };
 
   if (loading) {
@@ -234,13 +271,13 @@ export function AdminDashboard() {
                     <div className="font-sans text-[11px] text-white/50 mb-4 uppercase tracking-wide">
                       Zone: {permit.geo_zones?.name || 'Unknown'}
                     </div>
-                    <div className="flex justify-end">
+                    <div className="flex justify-end mt-2 border-t border-white/10 pt-3">
                       <button 
-                        onClick={() => approvePermit(permit.id)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 border border-green-500/50 hover:bg-green-500/10 transition-colors font-sans text-[10px] font-bold uppercase tracking-widest text-green-500"
+                        onClick={() => setActiveScanHash(permit.blockchain_hash)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0a0a0a] border border-white/20 hover:border-white/50 transition-all font-mono text-[10px] font-bold uppercase tracking-widest text-white"
                       >
-                        <Check className="w-3 h-3" />
-                        Approve
+                        <ScanLine className="w-3.5 h-3.5" />
+                        Scan To Verify
                       </button>
                     </div>
                   </div>
@@ -251,6 +288,98 @@ export function AdminDashboard() {
 
         </div>
       </main>
+
+      {/* Scanner Modal HUD */}
+      {activeScanHash && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md p-4">
+          <div className="absolute inset-0 bg-[linear-gradient(rgba(0,255,0,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(0,255,0,0.03)_1px,transparent_1px)] bg-[size:40px_40px] pointer-events-none" />
+          
+          <div className="relative w-full max-w-2xl bg-black border border-green-500/30 shadow-[0_0_30px_rgba(34,197,94,0.1)] p-1 overflow-hidden">
+            <div className="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 border-green-500" />
+            <div className="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 border-green-500" />
+            <div className="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 border-green-500" />
+            <div className="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 border-green-500" />
+            
+            <div className="flex items-center justify-between p-4 border-b border-green-500/20 bg-green-950/20">
+              <div className="flex items-center gap-2">
+                <Scan className="w-5 h-5 text-green-400" />
+                <h2 className="font-mono text-sm tracking-[0.2em] text-green-400">SECURE VERIFICATION TERMINAL</h2>
+              </div>
+              <button onClick={() => { setActiveScanHash(null); setScannedData(null); setScanError(null); }} className="text-green-500/50 hover:text-green-400">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="p-6 relative min-h-[400px] flex flex-col items-center justify-center">
+              
+              {!scannedData && !scanError && (
+                <div className="w-full max-w-sm aspect-square relative">
+                   <div className="absolute -inset-4 border border-green-500/20 animate-pulse pointer-events-none" />
+                   <Scanner onScan={(result) => handleScan(result[0].rawValue)} />
+                   <div className="mt-8 text-center font-mono text-xs tracking-widest text-green-400 animate-pulse">
+                     AWAITING TOURIST QR CODE...
+                   </div>
+                </div>
+              )}
+
+              {scanError && (
+                 <div className="flex flex-col items-center justify-center gap-4 animate-in zoom-in fade-in duration-300">
+                    <ShieldAlert className="w-20 h-20 text-red-600 animate-pulse" />
+                    <h2 className="font-mono text-3xl font-bold tracking-widest text-red-600 text-center">FORGERY DETECTED</h2>
+                    <p className="font-mono text-red-500/60 uppercase tracking-widest">Invalid Hash Signature. Detain subject.</p>
+                    <button onClick={() => setScanError(null)} className="mt-8 px-6 py-2 border border-red-500/50 text-red-500 font-mono text-xs tracking-widest hover:bg-red-950/30">
+                      RE-SCAN
+                    </button>
+                 </div>
+              )}
+
+              {scannedData && (
+                 <div className="w-full animate-in fade-in slide-in-from-bottom-4 duration-500">
+                    <div className="flex items-center gap-3 mb-6 pb-4 border-b border-green-500/20">
+                      <Check className="w-6 h-6 text-green-400" />
+                      <div>
+                        <div className="font-mono text-green-400 text-lg tracking-widest">SIGNATURE MATCH FOUND</div>
+                        <div className="font-mono text-xs text-green-500/50 truncate w-full max-w-[400px]">HASH: {scannedData.blockchain_hash}</div>
+                      </div>
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-4 mb-8">
+                      <div className="p-3 bg-green-950/20 border border-green-500/20">
+                        <div className="font-mono text-[9px] text-green-500/50 tracking-widest mb-1">TOURIST NAME</div>
+                        <div className="font-sans text-sm font-bold text-white uppercase">{scannedData.tourists?.full_name}</div>
+                      </div>
+                      <div className="p-3 bg-green-950/20 border border-green-500/20">
+                        <div className="font-mono text-[9px] text-green-500/50 tracking-widest mb-1">PASSPORT NUMBER</div>
+                        <div className="font-sans text-sm font-bold text-white uppercase">{scannedData.notes?.match(/Passport:\s*([^,]+)/)?.[1] || 'N/A'}</div>
+                      </div>
+                      <div className="p-3 bg-green-950/20 border border-green-500/20">
+                        <div className="font-mono text-[9px] text-green-500/50 tracking-widest mb-1">ZONE REQUESTED</div>
+                        <div className="font-sans text-sm font-bold text-white uppercase">{scannedData.geo_zones?.name}</div>
+                      </div>
+                      <div className="p-3 bg-green-950/20 border border-green-500/20">
+                        <div className="font-mono text-[9px] text-green-500/50 tracking-widest mb-1">HOTEL</div>
+                        <div className="font-sans text-sm font-bold text-white uppercase">{scannedData.notes?.match(/Hotel:\s*(.+)$/)?.[1] || 'N/A'}</div>
+                      </div>
+                      <div className="col-span-2 p-3 bg-green-950/20 border border-green-500/20">
+                        <div className="font-mono text-[9px] text-green-500/50 tracking-widest mb-1">VALIDITY DATES</div>
+                        <div className="font-sans text-sm font-bold text-white uppercase">{new Date(scannedData.valid_from).toLocaleDateString()} - {new Date(scannedData.valid_until).toLocaleDateString()}</div>
+                      </div>
+                    </div>
+
+                    <button 
+                      onClick={confirmAndApprove}
+                      className="w-full py-4 bg-green-600 hover:bg-green-500 text-black font-mono text-sm font-bold tracking-[0.2em] transition-colors"
+                    >
+                      CONFIRM & APPROVE PASS
+                    </button>
+                 </div>
+              )}
+              
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

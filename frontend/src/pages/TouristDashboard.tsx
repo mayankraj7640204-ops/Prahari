@@ -3,8 +3,11 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
 import { 
   Shield, MapPin, Activity, AlertTriangle, FileText, Navigation, 
-  CheckCircle, Wifi, QrCode, Power, CloudSun, Leaf, Bell, User, Map, BookOpen, Smartphone, Settings, Menu
+  CheckCircle, Wifi, QrCode, Power, CloudSun, Leaf, Bell, User, Map, BookOpen, Smartphone, Settings, Menu, X
 } from 'lucide-react';
+import QRCode from 'react-qr-code';
+import SHA256 from 'crypto-js/sha256';
+import { GoogleGenAI } from '@google/genai';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -19,6 +22,17 @@ export function TouristDashboard() {
   const [isSosActive, setIsSosActive] = useState(false);
   const [loading, setLoading] = useState(true);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [showTravelForm, setShowTravelForm] = useState(false);
+  const [isProcessingAI, setIsProcessingAI] = useState(false);
+  const [enlargedQrHash, setEnlargedQrHash] = useState<string | null>(null);
+  const [formData, setFormData] = useState({
+    name: '',
+    passport: '',
+    departureDate: '',
+    returnDate: '',
+    hotel: ''
+  });
 
   useEffect(() => {
     async function fetchData() {
@@ -51,6 +65,124 @@ export function TouristDashboard() {
 
     fetchData();
   }, [user]);
+
+  useEffect(() => {
+    async function checkPendingItinerary() {
+      if (!user || !tourist) return;
+      const pendingItinerary = sessionStorage.getItem('pending_itinerary');
+      if (pendingItinerary) {
+        setShowTravelForm(true);
+      }
+    }
+    checkPendingItinerary();
+  }, [user, tourist]);
+
+  const handleTravelFormSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !tourist) return;
+    const pendingItinerary = sessionStorage.getItem('pending_itinerary');
+    if (!pendingItinerary) return;
+
+    setIsProcessingAI(true);
+    setToastMessage("AI is analyzing your itinerary globally...");
+
+    try {
+      const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.6-flash',
+        contents: `System: Extract the primary destination city and country from this itinerary. Return ONLY a valid JSON object in this format: { "location": "City, Country" }. Itinerary: ${pendingItinerary}`,
+      });
+      
+      const jsonStr = response.text?.replace(/```json/g, '').replace(/```/g, '').trim();
+      let extractedLocation = "";
+      try {
+        const parsed = JSON.parse(jsonStr || "{}");
+        extractedLocation = parsed.location;
+      } catch (e) {
+        throw new Error("Failed to parse AI location JSON.");
+      }
+      
+      if (!extractedLocation) throw new Error("Could not extract location");
+
+      let { data: zone } = await supabase
+        .from('geo_zones')
+        .select('id, name, is_restricted')
+        .ilike('name', `%${extractedLocation}%`)
+        .limit(1)
+        .single();
+
+      if (!zone) {
+        setToastMessage(`New Global Location Detected: ${extractedLocation}. Securing Zone...`);
+        const { data: newZone, error: insertError } = await supabase
+          .from('geo_zones')
+          .insert({
+            name: extractedLocation,
+            region_state: 'Global',
+            description: 'AI Extracted Global Zone',
+            threat_level: 'GREEN',
+            is_restricted: true
+          })
+          .select('id, name, is_restricted')
+          .single();
+          
+        if (insertError || !newZone) throw new Error("Failed to register global zone.");
+        zone = newZone;
+      }
+
+      if (zone && zone.is_restricted) {
+        // Update the tourist's name with the one provided in the form
+        if (formData.name) {
+          await supabase.from('tourists').update({ full_name: formData.name }).eq('id', tourist.id);
+        }
+        
+        const blockchainHash = SHA256(user.id + zone.id + Date.now().toString()).toString();
+        
+        const validFrom = new Date(formData.departureDate).toISOString();
+        const validUntil = new Date(formData.returnDate).toISOString();
+
+        const { error } = await supabase
+          .from('ilp_permits')
+          .insert({
+            tourist_id: tourist.id,
+            zone_id: zone.id,
+            valid_from: validFrom,
+            valid_until: validUntil,
+            status: 'pending',
+            blockchain_hash: blockchainHash,
+            notes: `Passport: ${formData.passport}, Hotel: ${formData.hotel}`
+          });
+
+        if (error) {
+          setToastMessage("Failed to secure pass: " + error.message);
+        } else {
+          setToastMessage("Global Zone Authorized. Secure Blockchain Digital Pass drafted successfully.");
+          const { data: newPermitsData } = await supabase
+            .from('ilp_permits')
+            .select('*, geo_zones(name)')
+            .eq('tourist_id', tourist.id)
+            .order('created_at', { ascending: false });
+          if (newPermitsData) setPermits(newPermitsData);
+        }
+      }
+      
+      setShowTravelForm(false);
+      sessionStorage.removeItem('pending_itinerary');
+      setFormData({ name: '', passport: '', departureDate: '', returnDate: '', hotel: '' });
+      
+    } catch (err: any) {
+      console.error("Error processing global itinerary:", err);
+      setToastMessage("Pipeline Error: " + (err.message || String(err)));
+    } finally {
+      setIsProcessingAI(false);
+    }
+  };
+
+  useEffect(() => {
+    if (toastMessage) {
+      const timer = setTimeout(() => setToastMessage(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [toastMessage]);
 
   const handleSOS = async () => {
     if (!tourist) return;
@@ -94,6 +226,85 @@ export function TouristDashboard() {
   return (
     <div className="min-h-screen bg-transparent text-black font-sans flex overflow-hidden selection:bg-[#0a0a0a]/10 relative">
       
+
+
+      {toastMessage && (
+        <div className="fixed top-24 left-1/2 -translate-x-1/2 bg-[#0a0a0a] text-white px-6 py-3 rounded-full shadow-lg z-[200] text-sm font-medium border border-white/10 flex items-center gap-2 animate-in fade-in slide-in-from-top-4">
+          <Shield className="w-4 h-4 text-green-400" />
+          {toastMessage}
+        </div>
+      )}
+
+      {enlargedQrHash && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
+          <div className="bg-white p-8 rounded-3xl shadow-2xl relative animate-in zoom-in-95 duration-200 border border-white/20">
+            <button 
+              onClick={() => setEnlargedQrHash(null)}
+              className="absolute top-4 right-4 p-2 bg-[#0a0a0a]/5 hover:bg-[#0a0a0a]/10 rounded-full transition-colors"
+            >
+              <X className="w-5 h-5 text-[#0a0a0a]" />
+            </button>
+            <h3 className="font-serif text-xl text-center mb-6 text-[#0a0a0a]">Blockchain Digital Pass</h3>
+            <div className="bg-white p-4 rounded-2xl shadow-sm border border-black/5">
+              <QRCode value={enlargedQrHash} size={256} />
+            </div>
+            <p className="mt-6 text-center font-mono text-xs text-[#0a0a0a]/50 max-w-[256px] break-all">
+              {enlargedQrHash}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {showTravelForm && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl w-full max-w-5xl shadow-2xl overflow-hidden border border-white/20">
+            <div className="px-8 py-6 bg-[#0a0a0a] text-white flex justify-between items-center">
+              <div>
+                <h3 className="font-serif text-2xl">Complete Your Travel Profile</h3>
+                <p className="text-white/60 text-sm mt-1">Mandatory verification for Secure Digital Pass Generation</p>
+              </div>
+              <button onClick={() => { setShowTravelForm(false); sessionStorage.removeItem('pending_itinerary'); }} className="text-white/40 hover:text-white transition-colors">
+                 <Power className="w-5 h-5 rotate-45" />
+              </button>
+            </div>
+            
+            <form onSubmit={handleTravelFormSubmit} className="p-8">
+              <div className="flex flex-col lg:flex-row items-center gap-4 bg-[#f5f5f5] p-3 rounded-2xl border border-black/5">
+                
+                <div className="flex-1 w-full relative">
+                  <label className="text-[10px] uppercase font-bold tracking-widest text-[#0a0a0a]/40 absolute top-3 left-4">Complete Name</label>
+                  <input required type="text" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="w-full bg-white border border-black/5 rounded-xl pt-8 pb-3 px-4 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#0a0a0a]/10" placeholder="John Doe" />
+                </div>
+
+                <div className="flex-1 w-full relative">
+                  <label className="text-[10px] uppercase font-bold tracking-widest text-[#0a0a0a]/40 absolute top-3 left-4">Passport / ID</label>
+                  <input required type="text" value={formData.passport} onChange={e => setFormData({...formData, passport: e.target.value})} className="w-full bg-white border border-black/5 rounded-xl pt-8 pb-3 px-4 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#0a0a0a]/10" placeholder="A1234567" />
+                </div>
+                
+                <div className="flex-[0.8] w-full relative">
+                  <label className="text-[10px] uppercase font-bold tracking-widest text-[#0a0a0a]/40 absolute top-3 left-4">Departure</label>
+                  <input required type="date" value={formData.departureDate} onChange={e => setFormData({...formData, departureDate: e.target.value})} className="w-full bg-white border border-black/5 rounded-xl pt-8 pb-3 px-4 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#0a0a0a]/10" />
+                </div>
+
+                <div className="flex-[0.8] w-full relative">
+                  <label className="text-[10px] uppercase font-bold tracking-widest text-[#0a0a0a]/40 absolute top-3 left-4">Return</label>
+                  <input required type="date" value={formData.returnDate} onChange={e => setFormData({...formData, returnDate: e.target.value})} className="w-full bg-white border border-black/5 rounded-xl pt-8 pb-3 px-4 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#0a0a0a]/10" />
+                </div>
+
+                <div className="flex-1 w-full relative">
+                  <label className="text-[10px] uppercase font-bold tracking-widest text-[#0a0a0a]/40 absolute top-3 left-4">Accommodation</label>
+                  <input required type="text" value={formData.hotel} onChange={e => setFormData({...formData, hotel: e.target.value})} className="w-full bg-white border border-black/5 rounded-xl pt-8 pb-3 px-4 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#0a0a0a]/10" placeholder="Grand Hotel" />
+                </div>
+                
+                <button disabled={isProcessingAI} type="submit" className="h-[68px] px-8 bg-[#0a0a0a] text-white rounded-xl font-medium text-sm hover:bg-black/80 transition-colors whitespace-nowrap disabled:opacity-50">
+                  {isProcessingAI ? 'Verifying...' : 'Verify & Generate'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Video Background */}
       <video
         src="/background.mp4"
@@ -137,7 +348,7 @@ export function TouristDashboard() {
               <SidebarItem isSidebarOpen={isSidebarOpen} icon={<Activity className="w-4 h-4" />} label="Command Dashboard" active />
               <SidebarItem isSidebarOpen={isSidebarOpen} icon={<Map className="w-4 h-4" />} label="Live Geo-Fence Map" />
               <SidebarItem isSidebarOpen={isSidebarOpen} icon={<Shield className="w-4 h-4" />} label="AI Incident Sentinel" />
-              <SidebarItem isSidebarOpen={isSidebarOpen} icon={<FileText className="w-4 h-4" />} label="Blockchain Digital Pass" />
+              <SidebarItem isSidebarOpen={isSidebarOpen} icon={<FileText className="w-4 h-4" />} label="Blockchain Digital Pass" onClick={() => document.getElementById('digital-passes')?.scrollIntoView({ behavior: 'smooth' })} />
               <button 
                 onClick={handleSOS}
                 title={!isSidebarOpen ? "Emergency & SOS" : undefined}
@@ -273,7 +484,7 @@ export function TouristDashboard() {
             </div>
 
             {/* Bottom Row - Permits Drawer */}
-            <div className="bg-white rounded-3xl border border-black/5 shadow-sm overflow-hidden flex flex-col min-h-[300px]">
+            <div id="digital-passes" className="bg-white rounded-3xl border border-black/5 shadow-sm overflow-hidden flex flex-col min-h-[300px]">
                <div className="px-6 py-5 border-b border-black/5 flex items-center justify-between bg-[#FDFBF7]/50">
                   <div className="flex items-center gap-3">
                     <BookOpen className="w-5 h-5 text-[#0a0a0a]/60" />
@@ -303,7 +514,17 @@ export function TouristDashboard() {
                             </p>
                           </div>
                           <div className="p-2 bg-[#0a0a0a]/5 rounded-xl">
-                            <QrCode className="w-6 h-6 text-[#0a0a0a]" />
+                            {permit.blockchain_hash ? (
+                              <div 
+                                className="bg-white p-1 rounded-lg shadow-sm border border-black/5 cursor-pointer hover:shadow-md transition-shadow"
+                                onClick={() => setEnlargedQrHash(permit.blockchain_hash)}
+                                title="Click to enlarge QR Code"
+                              >
+                                <QRCode value={permit.blockchain_hash} size={64} />
+                              </div>
+                            ) : (
+                              <QrCode className="w-6 h-6 text-[#0a0a0a]" />
+                            )}
                           </div>
                         </div>
 
@@ -312,7 +533,7 @@ export function TouristDashboard() {
                            <span className={cn(
                             "text-[10px] font-bold tracking-widest uppercase px-2.5 py-1 rounded-full",
                             permit.status === 'approved' ? "bg-green-100 text-green-700" : "bg-yellow-100 text-yellow-700"
-                          )}>{permit.status}</span>
+                          )}>{permit.status === 'pending' ? 'PENDING AUTHORITY APPROVAL' : permit.status}</span>
                         </div>
                       </div>
                     ))
@@ -327,10 +548,16 @@ export function TouristDashboard() {
   );
 }
 
-function SidebarItem({ icon, label, active, isSidebarOpen }: { icon: React.ReactNode, label: string, active?: boolean, isSidebarOpen?: boolean }) {
+function SidebarItem({ icon, label, active, isSidebarOpen, onClick }: { icon: React.ReactNode, label: string, active?: boolean, isSidebarOpen?: boolean, onClick?: () => void }) {
   return (
     <a 
-      href="#" 
+      href={onClick ? "#digital-passes" : "#"} 
+      onClick={(e) => {
+        if (onClick) {
+          e.preventDefault();
+          onClick();
+        }
+      }}
       title={!isSidebarOpen ? label : undefined}
       className={cn(
         "flex items-center gap-3 py-3 rounded-lg mx-2 text-sm font-medium transition-all duration-200",
