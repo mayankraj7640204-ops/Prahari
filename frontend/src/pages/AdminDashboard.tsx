@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Globe, Users, AlertOctagon, FileCheck, ShieldAlert, Crosshair, Check, Power, Shield, ScanLine, Scan, X } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Globe, Users, AlertOctagon, FileCheck, ShieldAlert, Crosshair, Check, Power, Shield, ScanLine, Scan, X, History } from 'lucide-react';
 import { Scanner } from '@yudiel/react-qr-scanner';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, Polygon, CircleMarker, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
@@ -48,7 +49,37 @@ function ChangeView({ center, zoom }: { center: [number, number], zoom: number }
   return null;
 }
 
+interface GeoZone {
+  id: string;
+  name: string;
+  threat_level: string;
+  is_restricted: boolean;
+  description: string;
+}
+
+// Component for Map Click Events (Extracted to prevent unmount on every render)
+function GeoFenceDrawTool({ isDrawing, setDraftCoordinates }: { isDrawing: boolean, setDraftCoordinates: React.Dispatch<React.SetStateAction<[number, number][]>> }) {
+  useMapEvents({
+    click(e) {
+      if (isDrawing) {
+        setDraftCoordinates(prev => [...prev, [e.latlng.lat, e.latlng.lng]]);
+      }
+    }
+  });
+  return null;
+}
+
 export function AdminDashboard() {
+  const navigate = useNavigate();
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [draftCoordinates, setDraftCoordinates] = useState<[number, number][]>([]);
+  const [zoneType, setZoneType] = useState('restricted');
+  const [zoneName, setZoneName] = useState('');
+  const [savedZones, setSavedZones] = useState<GeoZone[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [mapCenter, setMapCenter] = useState<[number, number]>([25.5788, 91.8933]);
+  const [mapZoom, setMapZoom] = useState(7);
+  
   const [stats, setStats] = useState({ tourists: 0, sos: 0, ilp: 0 });
   const [alerts, setAlerts] = useState<any[]>([]);
   const [permits, setPermits] = useState<any[]>([]);
@@ -116,16 +147,26 @@ export function AdminDashboard() {
         ilp: ilpCount || 0
       });
 
-      // Fetch Alerts
       const { data: alertsData } = await supabase
         .from('sos_alerts')
-        .select('*, tourists(full_name, phone)')
+        .select('*, tourists(full_name)')
         .neq('status', 'resolved')
         .order('created_at', { ascending: false })
-        .order('ai_severity_score', { ascending: false });
+        .limit(20);
+        
+      const { data: zonesData } = await supabase
+        .from('geo_zones')
+        .select('*');
+
+      if (zonesData) setSavedZones(zonesData);
       
       const uniqueAlerts = Array.from(new Map((alertsData || []).map((item: any) => [item.id, item])).values());
       setAlerts(uniqueAlerts);
+      
+      if (uniqueAlerts.length > 0) {
+        setMapCenter([uniqueAlerts[0].latitude, uniqueAlerts[0].longitude]);
+        setMapZoom(12);
+      }
 
       // Rehydrate active trackers for already dispatched units
       setActiveDispatches(prev => {
@@ -270,6 +311,71 @@ export function AdminDashboard() {
     }
   };
 
+  const handleSaveZone = async () => {
+    if (!zoneName || draftCoordinates.length < 3) {
+      alert("Please provide a name and draw at least 3 points.");
+      return;
+    }
+    const threatLevel = zoneType === 'safe' ? 'GREEN' : zoneType === 'caution' ? 'YELLOW' : 'RED';
+    const isRestricted = zoneType === 'restricted';
+    
+    // Store coordinates JSON in description field due to DB limitations
+    const descriptionJson = JSON.stringify({ coordinates: draftCoordinates });
+    
+    const { data, error } = await supabase.from('geo_zones').insert({
+      name: zoneName,
+      threat_level: threatLevel,
+      is_restricted: isRestricted,
+      region_state: 'Custom',
+      description: descriptionJson
+    }).select().single();
+    
+    if (error) {
+      console.error(error);
+      alert("Failed to save zone");
+    } else if (data) {
+      setSavedZones(prev => [...prev, data]);
+      setDraftCoordinates([]);
+      setIsDrawing(false);
+      setZoneName('');
+    }
+  };
+
+  const getZoneColor = (threat_level: string) => {
+    if (threat_level === 'GREEN') return '#22c55e';
+    if (threat_level === 'YELLOW') return '#f59e0b';
+    return '#ef4444';
+  };
+
+  const handleDeleteZone = async (id: string) => {
+    const { error } = await supabase.from('geo_zones').delete().eq('id', id);
+    if (!error) {
+      setSavedZones(prev => prev.filter(z => z.id !== id));
+      setToastMessage("Zone deleted successfully");
+      setTimeout(() => setToastMessage(null), 3000);
+    } else {
+      console.error(error);
+      alert("Failed to delete zone");
+    }
+  };
+
+  const handleSearchLocation = async () => {
+    if (!searchQuery) return;
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery)}`);
+      const data = await res.json();
+      if (data && data.length > 0) {
+        setMapCenter([parseFloat(data[0].lat), parseFloat(data[0].lon)]);
+        setMapZoom(14);
+      } else {
+        alert("Location not found");
+      }
+    } catch(e) {
+      console.error(e);
+      alert("Error searching location");
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center">
@@ -301,6 +407,14 @@ export function AdminDashboard() {
         </div>
 
         <div className="flex items-center gap-4">
+          <button 
+            onClick={() => navigate('/dashboard/admin/history')}
+            className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-white/5 border border-white/10 hover:bg-white/10 transition-colors"
+          >
+            <History className="w-4 h-4 text-white/70" />
+            <span className="text-[10px] font-mono tracking-widest text-white/70 uppercase">History</span>
+          </button>
+          
           <div className="flex items-center gap-2 px-3 py-1.5 bg-red-950/30 border border-red-500/50">
             <ShieldAlert className="w-4 h-4 text-red-500 animate-pulse" />
             <span className="text-[10px] font-mono tracking-widest text-red-500 uppercase">{stats.sos} Active SOS</span>
@@ -335,14 +449,15 @@ export function AdminDashboard() {
             </div>
             
             <MapContainer 
-              center={alerts.length > 0 ? [alerts[0].latitude, alerts[0].longitude] : [25.5788, 91.8933]} 
-              zoom={7} 
+              center={mapCenter} 
+              zoom={mapZoom} 
               style={{ width: '100%', height: '100%', zIndex: 0 }}
               zoomControl={false}
               attributionControl={false}
             >
+              <GeoFenceDrawTool isDrawing={isDrawing} setDraftCoordinates={setDraftCoordinates} />
               <MapResizer />
-              <ChangeView center={alerts.length > 0 ? [alerts[0].latitude, alerts[0].longitude] : [25.5788, 91.8933]} zoom={alerts.length > 0 ? 12 : 7} />
+              <ChangeView center={mapCenter} zoom={mapZoom} />
               <TileLayer
                 url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
                 attribution="&copy; OpenStreetMap contributors &copy; CARTO"
@@ -383,7 +498,136 @@ export function AdminDashboard() {
                   />
                 </div>
               ))}
+
+              {/* Render Saved Geo Zones */}
+              {savedZones.map(zone => {
+                try {
+                  if (!zone.description.startsWith('{')) return null;
+                  const parsed = JSON.parse(zone.description);
+                  if (!parsed.coordinates || parsed.coordinates.length < 3) return null;
+                  return (
+                    <Polygon 
+                      key={zone.id} 
+                      positions={parsed.coordinates} 
+                      pathOptions={{ 
+                        color: getZoneColor(zone.threat_level), 
+                        fillColor: getZoneColor(zone.threat_level),
+                        fillOpacity: 0.2,
+                        weight: 2
+                      }}
+                    >
+                      <Popup className="custom-popup">
+                        <div className="font-sans text-xs flex flex-col gap-2">
+                          <div>
+                            <strong>Zone:</strong> {zone.name}<br/>
+                            <strong>Type:</strong> {zone.threat_level}
+                          </div>
+                          <button 
+                            onClick={() => handleDeleteZone(zone.id)}
+                            className="bg-red-500/20 text-red-500 hover:bg-red-500 hover:text-white px-2 py-1 rounded text-[10px] uppercase font-bold tracking-wider transition-colors mt-1"
+                          >
+                            Delete Zone
+                          </button>
+                        </div>
+                      </Popup>
+                    </Polygon>
+                  );
+                } catch(e) { return null; }
+              })}
+
+              {/* Render Draft Polygon */}
+              {draftCoordinates.length > 0 && (
+                <>
+                  <Polyline 
+                    positions={draftCoordinates} 
+                    pathOptions={{ color: '#fff', dashArray: '5, 5', weight: 2 }} 
+                  />
+                  {draftCoordinates.length > 2 && (
+                    <Polygon 
+                      positions={draftCoordinates} 
+                      pathOptions={{ color: '#fff', fillColor: '#fff', fillOpacity: 0.2, dashArray: '5, 5', weight: 0 }} 
+                    />
+                  )}
+                  {draftCoordinates.map((coord, idx) => (
+                    <CircleMarker 
+                      key={`draft-${idx}`}
+                      center={coord}
+                      radius={4}
+                      pathOptions={{ color: '#fff', fillColor: '#3b82f6', fillOpacity: 1, weight: 2 }}
+                    />
+                  ))}
+                </>
+              )}
             </MapContainer>
+
+            {/* Drawing Tools Floating Panel */}
+            <div className="absolute top-4 right-4 z-[400] bg-black/80 backdrop-blur-md border border-white/20 p-4 rounded-xl flex flex-col gap-3 min-w-[250px]">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-white uppercase tracking-widest">Geo-Fence Tool</span>
+                <button 
+                  onClick={() => setIsDrawing(!isDrawing)}
+                  className={cn("px-3 py-1 rounded text-[10px] font-bold uppercase tracking-widest transition-colors", isDrawing ? "bg-red-500/20 text-red-400 hover:bg-red-500/30" : "bg-white/10 text-white hover:bg-white/20")}
+                >
+                  {isDrawing ? "Stop Drawing" : "Start Drawing"}
+                </button>
+              </div>
+              
+              {isDrawing && (
+                <div className="flex flex-col gap-3 animate-in fade-in slide-in-from-top-2">
+                  <div className="flex gap-2">
+                    <input 
+                      type="text" 
+                      placeholder="Search Place (e.g. Shillong)" 
+                      value={searchQuery}
+                      onChange={e => setSearchQuery(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && handleSearchLocation()}
+                      className="flex-1 bg-black/50 border border-white/20 rounded px-3 py-1.5 text-xs text-white placeholder-white/30 outline-none focus:border-white/50"
+                    />
+                    <button 
+                      onClick={handleSearchLocation}
+                      className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white rounded text-[10px] font-bold uppercase tracking-widest transition-colors"
+                    >
+                      Find
+                    </button>
+                  </div>
+                  <input 
+                    type="text" 
+                    placeholder="Zone Name (e.g. Sector 4)"  
+                    value={zoneName}
+                    onChange={e => setZoneName(e.target.value)}
+                    className="bg-black/50 border border-white/20 rounded px-3 py-1.5 text-xs text-white placeholder-white/30 outline-none focus:border-white/50"
+                  />
+                  <select 
+                    value={zoneType}
+                    onChange={e => setZoneType(e.target.value)}
+                    className="bg-black/50 border border-white/20 rounded px-3 py-1.5 text-xs text-white outline-none focus:border-white/50"
+                  >
+                    <option value="safe">Safe Zone (Green)</option>
+                    <option value="caution">Caution Zone (Yellow)</option>
+                    <option value="restricted">Restricted Zone (Red)</option>
+                  </select>
+                  <div className="flex justify-between items-center mt-1">
+                    <span className="text-[9px] text-white/40 uppercase tracking-widest">{draftCoordinates.length} Points</span>
+                    <div className="flex gap-2">
+                      <button 
+                        onClick={() => setDraftCoordinates([])}
+                        disabled={draftCoordinates.length === 0}
+                        className="px-3 py-1.5 bg-red-600/20 hover:bg-red-600/40 text-red-400 disabled:opacity-50 disabled:bg-white/5 rounded text-[10px] font-bold uppercase tracking-widest transition-colors"
+                      >
+                        Clear
+                      </button>
+                      <button 
+                        onClick={handleSaveZone}
+                        disabled={draftCoordinates.length < 3 || !zoneName}
+                        className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:bg-white/10 text-white rounded text-[10px] font-bold uppercase tracking-widest transition-colors"
+                      >
+                        Save Zone
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
         </div>
