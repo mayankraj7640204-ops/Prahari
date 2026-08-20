@@ -7,6 +7,10 @@ import { TouristLayout } from '@/layouts/TouristLayout';
 import { SentinelPage } from './pages/SentinelPage';
 import { GeoFencePage } from './pages/GeoFencePage';
 import { IncidentHistoryPage } from './pages/IncidentHistoryPage';
+import { ItineraryPlannerPage } from './pages/ItineraryPlannerPage';
+import { TravelerProfilePage } from './pages/TravelerProfilePage';
+import { SafeRoutePlannerPage } from './pages/SafeRoutePlannerPage';
+import { OfflineBeaconPage } from './pages/OfflineBeaconPage';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 
 function App() {
@@ -22,6 +26,10 @@ function App() {
             <Route index element={<TouristDashboard />} />
             <Route path="sentinel" element={<SentinelPage />} />
             <Route path="geofence" element={<GeoFencePage />} />
+            <Route path="itinerary" element={<ItineraryPlannerPage />} />
+            <Route path="profile" element={<TravelerProfilePage />} />
+            <Route path="route-planner" element={<SafeRoutePlannerPage />} />
+            <Route path="offline-beacon" element={<OfflineBeaconPage />} />
           </Route>
           <Route path="/dashboard/admin" element={<AdminDashboard />} />
           <Route path="/dashboard/admin/history" element={<IncidentHistoryPage />} />

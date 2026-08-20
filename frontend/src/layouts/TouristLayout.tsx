@@ -3,7 +3,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
 import { 
   Shield, Activity, AlertTriangle, FileText, Navigation, 
-  Power, Leaf, Bell, User, Map, Smartphone, Settings, Menu, X, Crosshair
+  Power, Leaf, Bell, User, Map, Smartphone, Settings, Menu, X, Crosshair, Calendar
 } from 'lucide-react';
 import QRCode from 'react-qr-code';
 import SHA256 from 'crypto-js/sha256';
@@ -25,6 +25,8 @@ export interface TouristContextType {
   userLocation: [number, number];
   setToastMessage: (msg: string) => void;
   setEnlargedPermit: (permit: any) => void;
+  travelerProfile: any | null;
+  refreshProfile: () => Promise<void>;
 }
 
 export function TouristLayout() {
@@ -32,6 +34,7 @@ export function TouristLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const [tourist, setTourist] = useState<any>(null);
+  const [travelerProfile, setTravelerProfile] = useState<any>(null);
   const [permits, setPermits] = useState<any[]>([]);
 
   const [loading, setLoading] = useState(true);
@@ -70,7 +73,6 @@ export function TouristLayout() {
   }, [activeSosAlert]);
   
   const [formData, setFormData] = useState({
-    name: '',
     passport: '',
     departureDate: '',
     returnDate: '',
@@ -82,6 +84,16 @@ export function TouristLayout() {
       if (!user) return;
       
       try {
+        const { data: profileData } = await supabase
+          .from('traveler_profiles')
+          .select('*')
+          .eq('id', user.id)
+          .single();
+        
+        if (profileData) {
+          setTravelerProfile(profileData);
+        }
+
         const { data: touristData } = await supabase
           .from('tourists')
           .select('*')
@@ -128,6 +140,13 @@ export function TouristLayout() {
 
     fetchData();
   }, [user]);
+
+  useEffect(() => {
+    if (!loading && !travelerProfile && location.pathname !== '/dashboard/tourist/profile') {
+      setToastMessage("Please complete your Traveler Profile to access the dashboard and generate passes.");
+      navigate('/dashboard/tourist/profile');
+    }
+  }, [loading, travelerProfile, location.pathname, navigate]);
 
   useEffect(() => {
     if (!tourist) return;
@@ -180,6 +199,45 @@ export function TouristLayout() {
     const pendingItinerary = sessionStorage.getItem('pending_itinerary');
     if (!pendingItinerary) return;
 
+    const nationality = travelerProfile?.nationality || 'Other';
+    const passport = formData.passport.trim();
+    let isValid = false;
+    let expectedFormat = "";
+
+    if (nationality === 'India') {
+      isValid = /^[A-PR-WYa-pr-wy][1-9]\d\s?\d{4}[1-9]$/.test(passport);
+      expectedFormat = "1 Letter + 7 Numbers (e.g., A1234567)";
+    } else if (nationality === 'USA' || nationality === 'United States') {
+      isValid = /^\d{9}$/.test(passport);
+      expectedFormat = "9 Digits";
+    } else if (nationality === 'UK' || nationality === 'United Kingdom') {
+      isValid = /^\d{9}$/.test(passport);
+      expectedFormat = "9 Digits";
+    } else {
+      isValid = /^(?!^([A-Za-z0-9])\1+$)[A-Za-z0-9]{6,15}$/i.test(passport);
+      expectedFormat = "6-15 Alphanumeric Characters";
+    }
+
+    if (!isValid) {
+      setToastMessage(`Invalid ${nationality} Passport Format (Expected: ${expectedFormat})`);
+      return;
+    }
+
+    const today = new Date(); 
+    today.setHours(0,0,0,0);
+    const depDate = new Date(formData.departureDate); 
+    depDate.setHours(0,0,0,0);
+    if (depDate < today) {
+       setToastMessage("Departure date cannot be in the past.");
+       return;
+    }
+    const retDate = new Date(formData.returnDate);
+    retDate.setHours(0,0,0,0);
+    if (retDate < depDate) {
+       setToastMessage("Return date cannot be before departure date.");
+       return;
+    }
+
     setIsProcessingAI(true);
     setToastMessage("AI is analyzing your itinerary globally...");
 
@@ -227,11 +285,6 @@ export function TouristLayout() {
       }
 
       if (zone && zone.is_restricted) {
-        // Update the tourist's name with the one provided in the form
-        if (formData.name) {
-          await supabase.from('tourists').update({ full_name: formData.name }).eq('id', tourist.id);
-        }
-        
         const blockchainHash = SHA256(user.id + zone.id + Date.now().toString()).toString();
         
         const validFrom = new Date(formData.departureDate).toISOString();
@@ -362,7 +415,8 @@ export function TouristLayout() {
 
   const handleSOSClick = () => {
     if (activeSosAlert) return;
-    setEmergencyName(tourist?.full_name === 'New Tourist' ? '' : tourist?.full_name || '');
+    const currentName = travelerProfile?.full_name || tourist?.full_name;
+    setEmergencyName(currentName === 'New Tourist' ? '' : currentName || '');
     setEmergencyPhone(tourist?.phone || '');
     setIncidentCategory('Medical Emergency');
     setCustomSosText('');
@@ -590,7 +644,7 @@ export function TouristLayout() {
               <div className="grid grid-cols-2 gap-4 pt-2">
                 <div>
                   <div className="font-mono text-[9px] text-[#0a0a0a]/50 tracking-widest mb-1 uppercase">Tourist Name</div>
-                  <div className="font-sans text-sm font-bold text-[#0a0a0a] uppercase">{tourist?.full_name || 'N/A'}</div>
+                  <div className="font-sans text-sm font-bold text-[#0a0a0a] uppercase">{travelerProfile?.full_name || tourist?.full_name || 'N/A'}</div>
                 </div>
                 <div>
                   <div className="font-mono text-[9px] text-[#0a0a0a]/50 tracking-widest mb-1 uppercase">Passport / ID</div>
@@ -664,23 +718,18 @@ export function TouristLayout() {
               <div className="flex flex-col lg:flex-row items-center gap-4 bg-[#f5f5f5] p-3 rounded-2xl border border-black/5">
                 
                 <div className="flex-1 w-full relative">
-                  <label className="text-[10px] uppercase font-bold tracking-widest text-[#0a0a0a]/40 absolute top-3 left-4">Complete Name</label>
-                  <input required type="text" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="w-full bg-white border border-black/5 rounded-xl pt-8 pb-3 px-4 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#0a0a0a]/10" placeholder="John Doe" />
-                </div>
-
-                <div className="flex-1 w-full relative">
                   <label className="text-[10px] uppercase font-bold tracking-widest text-[#0a0a0a]/40 absolute top-3 left-4">Passport / ID</label>
                   <input required type="text" value={formData.passport} onChange={e => setFormData({...formData, passport: e.target.value})} className="w-full bg-white border border-black/5 rounded-xl pt-8 pb-3 px-4 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#0a0a0a]/10" placeholder="A1234567" />
                 </div>
                 
                 <div className="flex-[0.8] w-full relative">
                   <label className="text-[10px] uppercase font-bold tracking-widest text-[#0a0a0a]/40 absolute top-3 left-4">Departure</label>
-                  <input required type="date" value={formData.departureDate} onChange={e => setFormData({...formData, departureDate: e.target.value})} className="w-full bg-white border border-black/5 rounded-xl pt-8 pb-3 px-4 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#0a0a0a]/10" />
+                  <input required min={new Date().toISOString().split('T')[0]} type="date" value={formData.departureDate} onChange={e => setFormData({...formData, departureDate: e.target.value})} className="w-full bg-white border border-black/5 rounded-xl pt-8 pb-3 px-4 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#0a0a0a]/10" />
                 </div>
 
                 <div className="flex-[0.8] w-full relative">
                   <label className="text-[10px] uppercase font-bold tracking-widest text-[#0a0a0a]/40 absolute top-3 left-4">Return</label>
-                  <input required type="date" value={formData.returnDate} onChange={e => setFormData({...formData, returnDate: e.target.value})} className="w-full bg-white border border-black/5 rounded-xl pt-8 pb-3 px-4 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#0a0a0a]/10" />
+                  <input required min={formData.departureDate || new Date().toISOString().split('T')[0]} type="date" value={formData.returnDate} onChange={e => setFormData({...formData, returnDate: e.target.value})} className="w-full bg-white border border-black/5 rounded-xl pt-8 pb-3 px-4 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#0a0a0a]/10" />
                 </div>
 
                 <div className="flex-1 w-full relative">
@@ -739,6 +788,7 @@ export function TouristLayout() {
             <nav className="flex flex-col gap-1">
               <SidebarItem isSidebarOpen={isSidebarOpen} icon={<Activity className="w-4 h-4" />} label="Command Dashboard" active={location.pathname === '/dashboard/tourist'} onClick={() => navigate('/dashboard/tourist')} />
               <SidebarItem isSidebarOpen={isSidebarOpen} icon={<Map className="w-4 h-4" />} label="Live Geo-Fence Map" active={location.pathname === '/dashboard/tourist/geofence'} onClick={() => navigate('/dashboard/tourist/geofence')} />
+              <SidebarItem isSidebarOpen={isSidebarOpen} icon={<Calendar className="w-4 h-4" />} label="Itinerary Planner" active={location.pathname === '/dashboard/tourist/itinerary'} onClick={() => navigate('/dashboard/tourist/itinerary')} />
               <SidebarItem isSidebarOpen={isSidebarOpen} icon={<Shield className="w-4 h-4" />} label="AI Incident Sentinel" active={location.pathname === '/dashboard/tourist/sentinel'} onClick={() => navigate('/dashboard/tourist/sentinel')} />
               <SidebarItem 
                 isSidebarOpen={isSidebarOpen} 
@@ -768,15 +818,33 @@ export function TouristLayout() {
                 <div className="shrink-0"><AlertTriangle className={cn("w-4 h-4", activeSosAlert ? "animate-pulse text-red-400" : "")} /></div>
                 {isSidebarOpen && <span className="whitespace-nowrap">{activeSosAlert ? "SOS Transmitting..." : "Emergency & SOS"}</span>}
               </button>
-              <SidebarItem isSidebarOpen={isSidebarOpen} icon={<Navigation className="w-4 h-4" />} label="Safe Route Planner" />
-              <SidebarItem isSidebarOpen={isSidebarOpen} icon={<Smartphone className="w-4 h-4" />} label="Offline Beacon" />
+              <SidebarItem 
+                isSidebarOpen={isSidebarOpen} 
+                icon={<Navigation className="w-4 h-4" />} 
+                label="Safe Route Planner" 
+                onClick={() => navigate('/dashboard/tourist/route-planner')}
+                active={location.pathname === '/dashboard/tourist/route-planner'}
+              />
+              <SidebarItem 
+                isSidebarOpen={isSidebarOpen} 
+                icon={<Smartphone className="w-4 h-4" />} 
+                label="Offline Beacon" 
+                onClick={() => navigate('/dashboard/tourist/offline-beacon')}
+                active={location.pathname === '/dashboard/tourist/offline-beacon'}
+              />
             </nav>
           </div>
 
           <div className="px-4 mt-8">
             {isSidebarOpen && <h2 className="text-[10px] font-bold tracking-widest text-white/40 uppercase mb-4 px-4 whitespace-nowrap">Account</h2>}
             <nav className="flex flex-col gap-1">
-              <SidebarItem isSidebarOpen={isSidebarOpen} icon={<User className="w-4 h-4" />} label="Traveler Profile" />
+              <SidebarItem 
+                isSidebarOpen={isSidebarOpen} 
+                icon={<User className="w-4 h-4" />} 
+                label="Traveler Profile" 
+                onClick={() => navigate('/dashboard/tourist/profile')}
+                active={location.pathname === '/dashboard/tourist/profile'}
+              />
               <SidebarItem isSidebarOpen={isSidebarOpen} icon={<Settings className="w-4 h-4" />} label="Settings" />
             </nav>
           </div>
@@ -817,8 +885,17 @@ export function TouristLayout() {
               <Bell className="w-4 h-4" />
             </button>
             
-            <div className="w-10 h-10 bg-[#0a0a0a] rounded-full flex items-center justify-center text-white shadow-sm overflow-hidden">
-              <User className="w-5 h-5 opacity-80" />
+            <div className="flex items-center gap-3">
+              <span className="text-sm font-semibold text-[#0a0a0a] hidden md:block">
+                {travelerProfile?.full_name || 'New Traveler'}
+              </span>
+              <div className="w-10 h-10 bg-[#0a0a0a] rounded-full flex items-center justify-center text-white shadow-sm overflow-hidden">
+                {travelerProfile?.avatar_url ? (
+                  <img src={travelerProfile.avatar_url} alt="Avatar" className="w-full h-full object-cover" />
+                ) : (
+                  <User className="w-5 h-5 opacity-80" />
+                )}
+              </div>
             </div>
           </div>
         </header>
@@ -827,14 +904,22 @@ export function TouristLayout() {
         <main className="flex-1 overflow-y-auto z-10">
           <Outlet context={{ 
             tourist, 
+            travelerProfile,
             permits, 
             activeSosAlert, 
             activeEta, 
             locationName, 
             userLocation, 
             setToastMessage,
-            setEnlargedPermit
-          } satisfies TouristContextType} />
+            setEnlargedPermit,
+            refreshProfile: async () => {
+              const { data: { user } } = await supabase.auth.getUser();
+              if (user) {
+                const { data } = await supabase.from('traveler_profiles').select('*').eq('id', user.id).single();
+                if (data) setTravelerProfile(data);
+              }
+            }
+          }} />
         </main>
       </div>
     </div>

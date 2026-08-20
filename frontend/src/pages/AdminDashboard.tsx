@@ -104,8 +104,15 @@ export function AdminDashboard() {
       })
       .subscribe();
 
+    const emergChannel = supabase.channel('admin-emergencies')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'emergencies' }, () => {
+        fetchData();
+      })
+      .subscribe();
+
     return () => {
       supabase.removeChannel(sosChannel);
+      supabase.removeChannel(emergChannel);
     };
   }, []);
 
@@ -139,11 +146,12 @@ export function AdminDashboard() {
       // Fetch stats
       const { count: touristCount } = await supabase.from('tourists').select('*', { count: 'exact', head: true });
       const { count: sosCount } = await supabase.from('sos_alerts').select('*', { count: 'exact', head: true }).neq('status', 'resolved');
+      const { count: emergCount } = await supabase.from('emergencies').select('*', { count: 'exact', head: true }).neq('status', 'resolved');
       const { count: ilpCount } = await supabase.from('ilp_permits').select('*', { count: 'exact', head: true }).eq('status', 'pending');
 
       setStats({
         tourists: touristCount || 0,
-        sos: sosCount || 0,
+        sos: (sosCount || 0) + (emergCount || 0),
         ilp: ilpCount || 0
       });
 
@@ -154,13 +162,35 @@ export function AdminDashboard() {
         .order('created_at', { ascending: false })
         .limit(20);
         
+      const { data: emergenciesData } = await supabase
+        .from('emergencies')
+        .select('*')
+        .neq('status', 'resolved')
+        .order('created_at', { ascending: false })
+        .limit(20);
+        
+      const mappedEmergencies = (emergenciesData || []).map((e: any) => ({
+        id: e.id,
+        tourist_id: e.traveler_id,
+        tourists: { full_name: e.tourist_name },
+        latitude: e.latitude,
+        longitude: e.longitude,
+        status: e.status === 'ACTIVE_SOS' ? 'active' : e.status,
+        incident_type: `[OFFLINE BEACON] Battery: ${e.battery}`,
+        ai_severity_score: 10,
+        created_at: e.created_at,
+        is_emergency_table: true
+      }));
+
+      const combinedAlerts = [...(alertsData || []), ...mappedEmergencies].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+        
       const { data: zonesData } = await supabase
         .from('geo_zones')
         .select('*');
 
       if (zonesData) setSavedZones(zonesData);
       
-      const uniqueAlerts = Array.from(new Map((alertsData || []).map((item: any) => [item.id, item])).values());
+      const uniqueAlerts = Array.from(new Map((combinedAlerts || []).map((item: any) => [item.id, item])).values());
       setAlerts(uniqueAlerts);
       
       if (uniqueAlerts.length > 0) {
@@ -213,29 +243,24 @@ export function AdminDashboard() {
 
   const confirmDispatch = async (unitName: string) => {
     if (!selectedAlertForDispatch) return;
-    const alertId = selectedAlertForDispatch.id;
+    const alert = selectedAlertForDispatch;
     try {
-      const dispatchTimestamp = Date.now();
-      const updatedIncident = `${selectedAlertForDispatch.incident_type} [DISPATCHED:${dispatchTimestamp}]`;
-      const { error } = await supabase.from('sos_alerts').update({ 
-        status: 'dispatched',
-        incident_type: updatedIncident 
-      }).eq('id', alertId);
-      
-      if (error) {
-        console.error('Failed to dispatch unit', error);
-        setToastMessage(`Dispatch Failed: ${error.message}`);
-        return;
+      if (alert.is_emergency_table) {
+        await supabase.from('emergencies').update({ status: 'dispatched' }).eq('id', alert.id);
+      } else {
+        await supabase.from('sos_alerts').update({ 
+          status: 'dispatched',
+          incident_type: `[DISPATCHED:${Date.now()}] ${alert.incident_type}`
+        }).eq('id', alert.id);
       }
       
-      // Add to simulated active dispatches
       setActiveDispatches(prev => [...prev, {
-        alertId,
+        alertId: alert.id,
         unitName,
-        lat: selectedAlertForDispatch.latitude - 0.015,
-        lng: selectedAlertForDispatch.longitude - 0.015,
-        targetLat: selectedAlertForDispatch.latitude,
-        targetLng: selectedAlertForDispatch.longitude,
+        lat: alert.latitude - 0.015,
+        lng: alert.longitude - 0.015,
+        targetLat: alert.latitude,
+        targetLng: alert.longitude,
         eta: 15
       }]);
       
@@ -249,13 +274,13 @@ export function AdminDashboard() {
     }
   };
 
-  const resolveSOS = async (id: string) => {
+  const handleResolveAlert = async (id: string) => {
     try {
-      const { error } = await supabase.from('sos_alerts').update({ status: 'resolved' }).eq('id', id);
-      if (error) {
-        console.error('Failed to resolve SOS', error);
-        setToastMessage(`Resolve Failed: ${error.message}`);
-        return;
+      const targetAlert = alerts.find((a: any) => a.id === id);
+      if (targetAlert?.is_emergency_table) {
+        await supabase.from('emergencies').update({ status: 'resolved' }).eq('id', id);
+      } else {
+        await supabase.from('sos_alerts').update({ status: 'resolved' }).eq('id', id);
       }
       setActiveDispatches(prev => prev.filter(d => d.alertId !== id));
       setAlerts(prev => prev.filter(a => a.id !== id));
@@ -308,6 +333,17 @@ export function AdminDashboard() {
       fetchData();
     } catch (err) {
       console.error('Failed to approve pass', err);
+    }
+  };
+
+  const handleRejectPermit = async (permitId: string) => {
+    try {
+      await supabase.from('ilp_permits').update({ status: 'rejected' }).eq('id', permitId);
+      setToastMessage("Application Rejected due to mismatch.");
+      fetchData(); 
+    } catch (err) {
+      console.error('Failed to reject pass', err);
+      setToastMessage("Failed to reject pass.");
     }
   };
 
@@ -684,7 +720,7 @@ export function AdminDashboard() {
                       </a>
                       <div className="flex items-center gap-2">
                         <button 
-                          onClick={() => resolveSOS(alert.id)}
+                          onClick={() => handleResolveAlert(alert.id)}
                           className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0a0a0a] border border-white/20 hover:border-white/50 transition-colors font-sans text-[10px] font-bold uppercase tracking-widest text-white"
                         >
                           Resolve
@@ -735,7 +771,14 @@ export function AdminDashboard() {
                     <div className="font-sans text-[11px] text-white/50 mb-4 uppercase tracking-wide">
                       Zone: {permit.geo_zones?.name || 'Unknown'}
                     </div>
-                    <div className="flex justify-end mt-2 border-t border-white/10 pt-3">
+                    <div className="flex justify-end mt-2 border-t border-white/10 pt-3 gap-2">
+                      <button 
+                        onClick={() => handleRejectPermit(permit.id)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-transparent border border-red-500/50 hover:bg-red-500/10 transition-all font-mono text-[10px] font-bold uppercase tracking-widest text-red-500"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                        Reject
+                      </button>
                       <button 
                         onClick={() => setActiveScanHash(permit.blockchain_hash)}
                         className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0a0a0a] border border-white/20 hover:border-white/50 transition-all font-mono text-[10px] font-bold uppercase tracking-widest text-white"
