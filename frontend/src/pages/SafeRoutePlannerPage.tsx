@@ -127,7 +127,7 @@ Return ONLY a valid JSON object in exactly this format:
 }
 Color Rules: green >75, yellow 40-75, red <40. Return RAW JSON without any markdown formatting. You MUST return ONLY a raw JSON object. Do not include markdown formatting, backticks, or the word 'json'.`;
 
-      const aiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${apiKey}`, {
+      const aiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"

@@ -244,7 +244,7 @@ export function TouristLayout() {
     try {
       const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
       const response = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
+        model: 'gemini-flash-latest',
         contents: `System: Extract the primary destination city and country from this itinerary. Return ONLY a valid JSON object in this format: { "location": "City, Country" }. Itinerary: ${pendingItinerary}`,
       });
       

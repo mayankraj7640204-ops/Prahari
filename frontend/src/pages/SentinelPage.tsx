@@ -63,7 +63,7 @@ export function SentinelPage() {
       Generate 3 to 4 alert objects. Do not include markdown code blocks, just the raw JSON.`;
 
       const response = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
+        model: 'gemini-flash-latest',
         contents: prompt,
       });
 
