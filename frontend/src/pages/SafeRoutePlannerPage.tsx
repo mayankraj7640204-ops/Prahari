@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { MapContainer, TileLayer, Marker, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
-import { Car, Footprints, Bike, Train, Navigation2, MapPin, AlertTriangle, Clock, ShieldCheck, MapPinIcon, Utensils, Camera, Coffee } from 'lucide-react';
+import { Car, Footprints, Bike, Train, Navigation2, MapPin, AlertTriangle, Clock, MapPinIcon, Utensils, Camera, Coffee } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 

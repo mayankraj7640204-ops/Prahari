@@ -1,13 +1,7 @@
 import { useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
-import { User, Calendar, Activity, Map, MapPin, CheckCircle2, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { User, Calendar, Map, MapPin, CheckCircle2, AlertTriangle, ShieldCheck } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { clsx, type ClassValue } from 'clsx';
-import { twMerge } from 'tailwind-merge';
-
-function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
 
 // Extracted context type assuming we update TouristLayout to provide it
 interface ExtendedTouristContext {

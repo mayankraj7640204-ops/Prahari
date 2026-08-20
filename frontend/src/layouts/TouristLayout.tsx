@@ -317,7 +317,7 @@ export function TouristLayout() {
       
       setShowTravelForm(false);
       sessionStorage.removeItem('pending_itinerary');
-      setFormData({ name: '', passport: '', departureDate: '', returnDate: '', hotel: '' });
+      setFormData({ passport: '', departureDate: '', returnDate: '', hotel: '' });
       
     } catch (err: any) {
       console.error("Error processing global itinerary:", err);
