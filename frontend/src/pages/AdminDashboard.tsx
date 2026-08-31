@@ -495,8 +495,9 @@ export function AdminDashboard() {
               <MapResizer />
               <ChangeView center={mapCenter} zoom={mapZoom} />
               <TileLayer
-                url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-                attribution="&copy; OpenStreetMap contributors &copy; CARTO"
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                attribution="&copy; OpenStreetMap contributors"
+                className="map-tiles"
               />
               
               {/* Plot SOS Alerts */}

@@ -281,7 +281,7 @@ Color Rules: green >75, yellow 40-75, red <40. Return RAW JSON without any markd
           zoomControl={false}
         >
           <TileLayer
-            url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
           />
           {routePath.length > 0 && (

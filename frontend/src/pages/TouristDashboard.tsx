@@ -113,7 +113,8 @@ export function TouristDashboard() {
               <MapResizer />
               <ChangeView center={userLocation} zoom={14} />
               <TileLayer
-                url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                attribution="&copy; OpenStreetMap contributors"
               />
               
               {/* Tourist Location */}
