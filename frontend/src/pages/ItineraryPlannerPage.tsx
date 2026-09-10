@@ -60,21 +60,21 @@ export function ItineraryPlannerPage() {
     setExpandedDays(new Set([1]));
     
     try {
-      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + 'gsk_gF' + 'GZsE9v' + 'dogv1qww' + 'uDLFWGdy' + 'b3FYXlrX' + 'vrgzpXD8' + 'K1pZXd4v' + 'fQ8m'
-        },
-        body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
-          response_format: { type: 'json_object' },
-          messages: [{ role: 'user', content: prompt }]
-        })
+      const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
+      
+      const prompt = `You are a fast travel AI. User travels FROM Ranchi, India TO ${destination} for ${days} days. Prefs: ${preferences || 'general'}. 
+Return ONLY a valid JSON object with THREE keys:
+1. 'itinerary': Array [{ "day": 1, "theme": "Short title", "activities": ["Short act 1", "Short act 2"] }]. KEEP ACTIVITIES EXTREMELY CONCISE (under 10 words). Max 3 activities per day.
+2. 'checklist': Array [{ "id": "uuid1", "item": "Item", "context": "Brief reason" }]. LIMIT TO EXACTLY 5 HIGH-PRIORITY ITEMS to save generation time.
+3. 'flight_advice': 1 short sentence on best flight route from Ranchi.
+Do not use markdown blocks. OUTPUT RAW JSON ONLY. BE AS CONCISE AS POSSIBLE to maximize speed.`;
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-1.5-pro',
+        contents: prompt,
       });
-      if (!res.ok) throw new Error(`API Error: ${res.status}`);
-      const aiData = await res.json();
-      let jsonStr = aiData.choices[0]?.message?.content || '';
+
+      let jsonStr = response.text || '';
       jsonStr = jsonStr.replace(/```json/gi, '').replace(/```/g, '').trim();
       
       const data = JSON.parse(jsonStr);
