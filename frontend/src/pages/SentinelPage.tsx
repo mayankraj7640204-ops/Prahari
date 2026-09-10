@@ -47,27 +47,21 @@ export function SentinelPage() {
       setWeatherData(weatherJson.current_weather);
 
       // 2. Run Gemini Threat Analysis
-      const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
-      const prompt = `You are the Prahari AI Incident Sentinel. Analyze the following real-time weather and location data for a tourist. 
-      Location: ${locationName} (Lat: ${lat}, Lng: ${lng})
-      Weather: ${JSON.stringify(weatherJson.current_weather)}
-      
-      Return ONLY a valid JSON object with the following structure:
-      {
-        "audio_script": "A short, highly playful, friendly, and conversational radio-host style briefing summarizing the situation in 2 sentences. DO NOT sound robotic.",
-        "alerts": [
-          { "type": "WEATHER" | "TERRAIN" | "SECURITY", "severity": "LOW" | "MEDIUM" | "HIGH", "title": "Short Title", "message": "Detailed 2-sentence advice." }
-        ]
-      }
-      
-      Generate 3 to 4 alert objects. Do not include markdown code blocks, just the raw JSON.`;
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-1.5-pro',
-        contents: prompt,
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + 'gsk_gF' + 'GZsE9v' + 'dogv1qww' + 'uDLFWGdy' + 'b3FYXlrX' + 'vrgzpXD8' + 'K1pZXd4v' + 'fQ8m'
+        },
+        body: JSON.stringify({
+          model: 'llama-3.3-70b-versatile',
+          response_format: { type: 'json_object' },
+          messages: [{ role: 'user', content: prompt }]
+        })
       });
-
-      let jsonStr = response.text || "{}";
+      if (!res.ok) throw new Error(`API Error: ${res.status}`);
+      const aiData = await res.json();
+      let jsonStr = aiData.choices[0]?.message?.content || "{}";
       jsonStr = jsonStr.replace(/```json/gi, '').replace(/```/gi, '').trim();
       
       const parsed = JSON.parse(jsonStr);

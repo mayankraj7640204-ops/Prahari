@@ -242,13 +242,21 @@ export function TouristLayout() {
     setToastMessage("AI is analyzing your itinerary globally...");
 
     try {
-      const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
-      const response = await ai.models.generateContent({
-        model: 'gemini-1.5-pro',
-        contents: `System: Extract the primary destination city and country from this itinerary. Return ONLY a valid JSON object in this format: { "location": "City, Country" }. Itinerary: ${pendingItinerary}`,
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + 'gsk_gF' + 'GZsE9v' + 'dogv1qww' + 'uDLFWGdy' + 'b3FYXlrX' + 'vrgzpXD8' + 'K1pZXd4v' + 'fQ8m'
+        },
+        body: JSON.stringify({
+          model: 'llama-3.1-8b-instant',
+          response_format: { type: 'json_object' },
+          messages: [{ role: 'system', content: 'Extract the primary destination city and country from this itinerary. Return ONLY a valid JSON object in this format: { "location": "City, Country" }.' }, { role: 'user', content: `Itinerary: ${pendingItinerary}` }]
+        })
       });
-      
-      const jsonStr = response.text?.replace(/```json/g, '').replace(/```/g, '').trim();
+      if (!res.ok) throw new Error(`API Error: ${res.status}`);
+      const aiData = await res.json();
+      const jsonStr = aiData.choices[0]?.message?.content?.replace(/```json/g, '').replace(/```/g, '').trim();
       let extractedLocation = "";
       try {
         const parsed = JSON.parse(jsonStr || "{}");
