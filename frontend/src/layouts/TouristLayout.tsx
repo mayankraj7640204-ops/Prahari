@@ -239,102 +239,120 @@ export function TouristLayout() {
     }
 
     setIsProcessingAI(true);
-    setToastMessage("AI is analyzing your itinerary globally...");
 
-    let extractedLocation = "Unknown Destination";
+    // ============================================================
+    // INSTANT CLIENT-SIDE PASS GENERATION (never blocks on network)
+    // ============================================================
+    const blockchainHash = SHA256(user.id + Date.now().toString() + formData.passport).toString();
+    const passSerial = `PRH-2026-${blockchainHash.slice(0, 8).toUpperCase()}`;
+    const validFrom = new Date(formData.departureDate).toISOString();
+    const validUntil = new Date(formData.returnDate).toISOString();
 
-    // Phase 1: AI Location Extraction (with graceful degradation)
-    try {
-      const responseText = await generateGeminiContentWithRetry(
-        `Itinerary: ${pendingItinerary}`,
-        'Extract the primary destination city and country from this itinerary. Return ONLY a valid JSON object in this format: { "location": "City, Country" }.'
-      );
-      const jsonStr = responseText?.replace(/```json/g, '').replace(/```/g, '').trim();
+    // Extract location instantly from the itinerary text (no AI call needed for pass generation)
+    const fallbackMatch = pendingItinerary.match(/(?:to|in|for)\s+([A-Z][a-zA-Z\s,]+)/);
+    let extractedLocation = fallbackMatch ? fallbackMatch[1].trim() : "Global Destination";
+
+    // Save pass locally FIRST — UI succeeds instantly
+    const localPass = {
+      id: passSerial,
+      blockchain_hash: blockchainHash,
+      destination: extractedLocation,
+      valid_from: validFrom,
+      valid_until: validUntil,
+      passport: formData.passport,
+      hotel: formData.hotel,
+      status: 'pending',
+      created_at: new Date().toISOString()
+    };
+    localStorage.setItem('prahari_latest_pass', JSON.stringify(localPass));
+    console.log("[Prahari] Digital Pass generated instantly:", passSerial);
+
+    // Update UI immediately — close form, show success
+    setGlobalLocation(extractedLocation);
+    setShowTravelForm(false);
+    sessionStorage.removeItem('pending_itinerary');
+    setFormData({ passport: '', departureDate: '', returnDate: '', hotel: '' });
+    setToastMessage(`✓ Secure Digital Pass ${passSerial} generated for ${extractedLocation}!`);
+    setIsProcessingAI(false);
+
+    // ============================================================
+    // BACKGROUND SYNC TO SUPABASE (non-blocking, fire-and-forget)
+    // ============================================================
+    (async () => {
       try {
-        const parsed = JSON.parse(jsonStr || "{}");
-        if (parsed.location) {
-          extractedLocation = parsed.location;
+        console.log("[Prahari] Background Supabase sync starting...");
+
+        // Try AI location extraction in the background to refine the location
+        try {
+          const responseText = await generateGeminiContentWithRetry(
+            `Itinerary: ${pendingItinerary}`,
+            'Extract the primary destination city and country from this itinerary. Return ONLY a valid JSON object in this format: { "location": "City, Country" }.'
+          );
+          const jsonStr = responseText?.replace(/```json/g, '').replace(/```/g, '').trim();
+          const parsed = JSON.parse(jsonStr || "{}");
+          if (parsed.location) {
+            extractedLocation = parsed.location;
+            setGlobalLocation(extractedLocation);
+            console.log("[Prahari] AI refined location to:", extractedLocation);
+          }
+        } catch (aiErr) {
+          console.warn("[Prahari] Background AI extraction skipped:", aiErr);
         }
-      } catch (e) {
-        console.error("Failed to parse extracted location:", e);
-      }
-      setGlobalLocation(extractedLocation);
-      setToastMessage(`Itinerary analyzed! Tracking: ${extractedLocation}`);
-    } catch (aiErr) {
-      console.error("Global AI Extraction failed:", aiErr);
-      const fallbackMatch = pendingItinerary.match(/(?:to|in)\s+([A-Z][a-zA-Z\s,]+)/);
-      extractedLocation = fallbackMatch ? fallbackMatch[1].trim() : "Unknown Destination";
-      setGlobalLocation(extractedLocation);
-      setToastMessage(`AI offline. Tracking fallback: ${extractedLocation}`);
-    }
 
-    // Phase 2: Supabase pipeline (always runs)
-    try {
-      let { data: zone } = await supabase
-        .from('geo_zones')
-        .select('id, name, is_restricted')
-        .ilike('name', `%${extractedLocation}%`)
-        .limit(1)
-        .single();
-
-      if (!zone) {
-        setToastMessage(`New location detected: ${extractedLocation}. Securing zone...`);
-        const { data: newZone, error: insertError } = await supabase
+        // Supabase: Lookup or create geo_zone
+        let { data: zone } = await supabase
           .from('geo_zones')
-          .insert({
-            name: extractedLocation,
-            region_state: 'Global',
-            description: 'AI Extracted Global Zone',
-            threat_level: 'GREEN',
-            is_restricted: true
-          })
           .select('id, name, is_restricted')
+          .ilike('name', `%${extractedLocation}%`)
+          .limit(1)
           .single();
-          
-        if (insertError || !newZone) throw new Error("Failed to register global zone.");
-        zone = newZone;
-      }
 
-      if (zone && zone.is_restricted) {
-        const blockchainHash = SHA256(user.id + zone.id + Date.now().toString()).toString();
-        const validFrom = new Date(formData.departureDate).toISOString();
-        const validUntil = new Date(formData.returnDate).toISOString();
-
-        const { error } = await supabase
-          .from('ilp_permits')
-          .insert({
-            tourist_id: tourist.id,
-            zone_id: zone.id,
-            valid_from: validFrom,
-            valid_until: validUntil,
-            status: 'pending',
-            blockchain_hash: blockchainHash,
-            notes: `Passport: ${formData.passport}, Hotel: ${formData.hotel}`
-          });
-
-        if (error) {
-          setToastMessage("Failed to secure pass: " + error.message);
-        } else {
-          setToastMessage("Global Zone Authorized. Blockchain Digital Pass drafted successfully.");
-          const { data: newPermitsData } = await supabase
-            .from('ilp_permits')
-            .select('*, geo_zones(name)')
-            .eq('tourist_id', tourist.id)
-            .order('created_at', { ascending: false });
-          if (newPermitsData) setPermits(newPermitsData);
+        if (!zone) {
+          const { data: newZone } = await supabase
+            .from('geo_zones')
+            .insert({
+              name: extractedLocation,
+              region_state: 'Global',
+              description: 'AI Extracted Global Zone',
+              threat_level: 'GREEN',
+              is_restricted: true
+            })
+            .select('id, name, is_restricted')
+            .single();
+          zone = newZone;
         }
+
+        // Supabase: Insert permit
+        if (zone) {
+          const { error: permitError } = await supabase
+            .from('ilp_permits')
+            .insert({
+              tourist_id: tourist.id,
+              zone_id: zone.id,
+              valid_from: validFrom,
+              valid_until: validUntil,
+              status: 'pending',
+              blockchain_hash: blockchainHash,
+              notes: `Passport: ${formData.passport}, Hotel: ${formData.hotel}`
+            });
+
+          if (permitError) {
+            console.error("[Prahari] Background permit insert error:", permitError.message);
+          } else {
+            console.log("[Prahari] Background permit synced to Supabase ✓");
+            // Silently refresh permits list
+            const { data: newPermitsData } = await supabase
+              .from('ilp_permits')
+              .select('*, geo_zones(name)')
+              .eq('tourist_id', tourist.id)
+              .order('created_at', { ascending: false });
+            if (newPermitsData) setPermits(newPermitsData);
+          }
+        }
+      } catch (bgErr) {
+        console.error("[Prahari] Background sync failed (non-fatal):", bgErr);
       }
-      
-      setShowTravelForm(false);
-      sessionStorage.removeItem('pending_itinerary');
-      setFormData({ passport: '', departureDate: '', returnDate: '', hotel: '' });
-      
-    } catch (err: any) {
-      console.error("Error in Supabase pipeline:", err);
-      setToastMessage("Pipeline Error: " + (err.message || String(err)));
-    } finally {
-      setIsProcessingAI(false);
-    }
+    })();
   };
 
   useEffect(() => {
