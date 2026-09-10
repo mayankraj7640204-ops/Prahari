@@ -70,7 +70,7 @@ Return ONLY a valid JSON object with THREE keys:
 Do not use markdown blocks. OUTPUT RAW JSON ONLY. BE AS CONCISE AS POSSIBLE to maximize speed.`;
 
       const response = await ai.models.generateContent({
-        model: 'gemini-2.0-flash',
+        model: 'gemini-1.5-pro',
         contents: prompt,
       });
 
