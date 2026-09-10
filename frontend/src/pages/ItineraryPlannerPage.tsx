@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Compass, Calendar, MapPin, CheckCircle2, Circle, ChevronDown, ChevronUp, Sparkles, AlertTriangle, Plane } from 'lucide-react';
-import { GoogleGenAI } from '@google/genai';
+import { generateGeminiContentWithRetry } from '@/lib/gemini';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -60,8 +60,6 @@ export function ItineraryPlannerPage() {
     setExpandedDays(new Set([1]));
     
     try {
-      const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
-      
       const prompt = `You are a fast travel AI. User travels FROM Ranchi, India TO ${destination} for ${days} days. Prefs: ${preferences || 'general'}. 
 Return ONLY a valid JSON object with THREE keys:
 1. 'itinerary': Array [{ "day": 1, "theme": "Short title", "activities": ["Short act 1", "Short act 2"] }]. KEEP ACTIVITIES EXTREMELY CONCISE (under 10 words). Max 3 activities per day.
@@ -69,12 +67,9 @@ Return ONLY a valid JSON object with THREE keys:
 3. 'flight_advice': 1 short sentence on best flight route from Ranchi.
 Do not use markdown blocks. OUTPUT RAW JSON ONLY. BE AS CONCISE AS POSSIBLE to maximize speed.`;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-1.5-pro',
-        contents: prompt,
-      });
+      const responseText = await generateGeminiContentWithRetry(prompt);
 
-      let jsonStr = response.text || '';
+      let jsonStr = responseText || '';
       jsonStr = jsonStr.replace(/```json/gi, '').replace(/```/g, '').trim();
       
       const data = JSON.parse(jsonStr);
@@ -89,7 +84,20 @@ Do not use markdown blocks. OUTPUT RAW JSON ONLY. BE AS CONCISE AS POSSIBLE to m
       
     } catch (err: any) {
       console.error("AI Generation Error:", err);
-      setError("Failed to generate itinerary. Please try again. " + (err.message || ""));
+      setError("AI connection failed. Loading robust fallback itinerary template.");
+      
+      // Graceful degradation fallback
+      setItinerary(Array.from({ length: days }).map((_, i) => ({
+        day: i + 1,
+        theme: `Explore ${destination} - Area ${i + 1}`,
+        activities: ["Visit local landmarks", "Try regional cuisine", "Relax and take photos"]
+      })));
+      setChecklist([
+        { id: "1", item: "Passport & ID", context: "Required for travel" },
+        { id: "2", item: "Weather Gear", context: "Check local forecast" },
+        { id: "3", item: "Emergency Cash", context: "Always keep backups" },
+      ]);
+      setFlightAdvice(`Standard flight recommendations to ${destination} from your local hub.`);
     } finally {
       setIsGenerating(false);
     }

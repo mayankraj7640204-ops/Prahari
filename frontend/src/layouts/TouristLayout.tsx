@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import QRCode from 'react-qr-code';
 import SHA256 from 'crypto-js/sha256';
-import { GoogleGenAI } from '@google/genai';
+import { generateGeminiContentWithRetry } from '@/lib/gemini';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
@@ -241,24 +241,35 @@ export function TouristLayout() {
     setIsProcessingAI(true);
     setToastMessage("AI is analyzing your itinerary globally...");
 
+    let extractedLocation = "Unknown Destination";
+
+    // Phase 1: AI Location Extraction (with graceful degradation)
     try {
-      const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
-      const response = await ai.models.generateContent({
-        model: 'gemini-1.5-pro',
-        contents: `System: Extract the primary destination city and country from this itinerary. Return ONLY a valid JSON object in this format: { "location": "City, Country" }. Itinerary: ${pendingItinerary}`,
-      });
-      
-      const jsonStr = response.text?.replace(/```json/g, '').replace(/```/g, '').trim();
-      let extractedLocation = "";
+      const responseText = await generateGeminiContentWithRetry(
+        `Itinerary: ${pendingItinerary}`,
+        'Extract the primary destination city and country from this itinerary. Return ONLY a valid JSON object in this format: { "location": "City, Country" }.'
+      );
+      const jsonStr = responseText?.replace(/```json/g, '').replace(/```/g, '').trim();
       try {
         const parsed = JSON.parse(jsonStr || "{}");
-        extractedLocation = parsed.location;
+        if (parsed.location) {
+          extractedLocation = parsed.location;
+        }
       } catch (e) {
-        throw new Error("Failed to parse AI location JSON.");
+        console.error("Failed to parse extracted location:", e);
       }
-      
-      if (!extractedLocation) throw new Error("Could not extract location");
+      setGlobalLocation(extractedLocation);
+      setToastMessage(`Itinerary analyzed! Tracking: ${extractedLocation}`);
+    } catch (aiErr) {
+      console.error("Global AI Extraction failed:", aiErr);
+      const fallbackMatch = pendingItinerary.match(/(?:to|in)\s+([A-Z][a-zA-Z\s,]+)/);
+      extractedLocation = fallbackMatch ? fallbackMatch[1].trim() : "Unknown Destination";
+      setGlobalLocation(extractedLocation);
+      setToastMessage(`AI offline. Tracking fallback: ${extractedLocation}`);
+    }
 
+    // Phase 2: Supabase pipeline (always runs)
+    try {
       let { data: zone } = await supabase
         .from('geo_zones')
         .select('id, name, is_restricted')
@@ -267,7 +278,7 @@ export function TouristLayout() {
         .single();
 
       if (!zone) {
-        setToastMessage(`New Global Location Detected: ${extractedLocation}. Securing Zone...`);
+        setToastMessage(`New location detected: ${extractedLocation}. Securing zone...`);
         const { data: newZone, error: insertError } = await supabase
           .from('geo_zones')
           .insert({
@@ -286,7 +297,6 @@ export function TouristLayout() {
 
       if (zone && zone.is_restricted) {
         const blockchainHash = SHA256(user.id + zone.id + Date.now().toString()).toString();
-        
         const validFrom = new Date(formData.departureDate).toISOString();
         const validUntil = new Date(formData.returnDate).toISOString();
 
@@ -305,7 +315,7 @@ export function TouristLayout() {
         if (error) {
           setToastMessage("Failed to secure pass: " + error.message);
         } else {
-          setToastMessage("Global Zone Authorized. Secure Blockchain Digital Pass drafted successfully.");
+          setToastMessage("Global Zone Authorized. Blockchain Digital Pass drafted successfully.");
           const { data: newPermitsData } = await supabase
             .from('ilp_permits')
             .select('*, geo_zones(name)')
@@ -320,7 +330,7 @@ export function TouristLayout() {
       setFormData({ passport: '', departureDate: '', returnDate: '', hotel: '' });
       
     } catch (err: any) {
-      console.error("Error processing global itinerary:", err);
+      console.error("Error in Supabase pipeline:", err);
       setToastMessage("Pipeline Error: " + (err.message || String(err)));
     } finally {
       setIsProcessingAI(false);

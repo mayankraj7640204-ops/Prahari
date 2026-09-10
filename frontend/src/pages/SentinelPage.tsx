@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { TouristContextType } from '@/layouts/TouristLayout';
-import { GoogleGenAI } from '@google/genai';
+import { generateGeminiContentWithRetry } from '@/lib/gemini';
 import { Shield, AlertTriangle, Wind, Thermometer, MapPin, Square, Volume2 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -47,7 +47,6 @@ export function SentinelPage() {
       setWeatherData(weatherJson.current_weather);
 
       // 2. Run Gemini Threat Analysis
-      const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
       const prompt = `You are the Prahari AI Incident Sentinel. Analyze the following real-time weather and location data for a tourist. 
       Location: ${locationName} (Lat: ${lat}, Lng: ${lng})
       Weather: ${JSON.stringify(weatherJson.current_weather)}
@@ -62,12 +61,9 @@ export function SentinelPage() {
       
       Generate 3 to 4 alert objects. Do not include markdown code blocks, just the raw JSON.`;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-1.5-pro',
-        contents: prompt,
-      });
+      const responseText = await generateGeminiContentWithRetry(prompt);
 
-      let jsonStr = response.text || "{}";
+      let jsonStr = responseText || "{}";
       jsonStr = jsonStr.replace(/```json/gi, '').replace(/```/gi, '').trim();
       
       const parsed = JSON.parse(jsonStr);
