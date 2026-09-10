@@ -923,10 +923,21 @@ export function TouristLayout() {
             setToastMessage,
             setEnlargedPermit,
             refreshProfile: async () => {
-              const { data: { user } } = await supabase.auth.getUser();
-              if (user) {
-                const { data } = await supabase.from('traveler_profiles').select('*').eq('id', user.id).single();
-                if (data) setTravelerProfile(data);
+              try {
+                const { data: { user } } = await supabase.auth.getUser();
+                if (!user) return;
+                // Refresh traveler profile
+                const { data: profileData } = await supabase.from('traveler_profiles').select('*').eq('id', user.id).single();
+                if (profileData) setTravelerProfile(profileData);
+                // Also refresh tourist row and permits in case they were just created
+                const { data: touristData } = await supabase.from('tourists').select('*').eq('user_id', user.id).single();
+                if (touristData) {
+                  setTourist(touristData);
+                  const { data: permitsData } = await supabase.from('ilp_permits').select('*, geo_zones(name)').eq('tourist_id', touristData.id).order('created_at', { ascending: false });
+                  setPermits(permitsData || []);
+                }
+              } catch (err) {
+                console.error("[Prahari] refreshProfile error:", err);
               }
             }
           }} />
