@@ -69,8 +69,14 @@ Do not use markdown blocks. OUTPUT RAW JSON ONLY. BE AS CONCISE AS POSSIBLE to m
 
       const responseText = await generateGeminiContentWithRetry(prompt);
 
-      let jsonStr = responseText || '';
-      jsonStr = jsonStr.replace(/```json/gi, '').replace(/```/g, '').trim();
+      // If gemini.ts returned the fallback mock string, force it into the local fallback generator
+      if (responseText.includes('[System Notice:')) {
+        throw new Error("AI services overloaded. Switching to local offline generation.");
+      }
+
+      // Robust JSON extraction
+      const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+      const jsonStr = jsonMatch ? jsonMatch[0] : responseText.replace(/```json/gi, '').replace(/```/g, '').trim();
       
       const data = JSON.parse(jsonStr);
       
@@ -78,13 +84,18 @@ Do not use markdown blocks. OUTPUT RAW JSON ONLY. BE AS CONCISE AS POSSIBLE to m
         setItinerary(data.itinerary);
         setChecklist(data.checklist);
         if (data.flight_advice) setFlightAdvice(data.flight_advice);
+        
+        // Hide the fallback warning banner on success
+        setError(null);
       } else {
-        throw new Error("Invalid response format from AI.");
+        throw new Error("Invalid response format from AI - missing required keys.");
       }
       
     } catch (err: any) {
-      console.error("AI Generation Error:", err);
-      setError("AI connection failed. Loading robust fallback itinerary template.");
+      console.error("AI Generation Error (Raw):", err);
+      
+      // Provide a more friendly, non-critical notice
+      setError("AI Services experiencing high demand. Loaded a smart offline template.");
       
       // Graceful degradation fallback
       setItinerary(Array.from({ length: days }).map((_, i) => ({
@@ -128,7 +139,7 @@ Do not use markdown blocks. OUTPUT RAW JSON ONLY. BE AS CONCISE AS POSSIBLE to m
   };
 
   return (
-    <div className="flex-1 h-screen overflow-y-auto p-4 md:p-8 custom-scrollbar relative z-10 text-neutral-900 selection:bg-neutral-900/10">
+    <div className="flex-1 p-4 md:p-8 relative z-10 text-neutral-900 selection:bg-neutral-900/10">
       
       <div className="max-w-7xl mx-auto space-y-8 pb-20">
         
@@ -144,7 +155,7 @@ Do not use markdown blocks. OUTPUT RAW JSON ONLY. BE AS CONCISE AS POSSIBLE to m
         </div>
 
         {error && (
-          <div className="bg-red-500/10 border border-red-500/20 text-red-200 px-4 py-3 rounded-xl flex items-center gap-3 text-sm animate-in fade-in">
+          <div className="bg-amber-500/10 border border-amber-500/20 text-amber-500 px-4 py-3 rounded-xl flex items-center gap-3 text-sm animate-in fade-in shadow-sm">
             <AlertTriangle className="w-5 h-5 shrink-0" />
             {error}
           </div>
