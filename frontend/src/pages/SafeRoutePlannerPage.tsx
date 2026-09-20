@@ -227,7 +227,15 @@ export function SafeRoutePlannerPage() {
           } else {
             const route = osrmData.routes[0];
             finalPath = route.geometry.coordinates.map((coord: [number, number]) => [coord[1], coord[0]]);
-            const mins = Math.round(route.duration / 60);
+            
+            // Apply real-world congestion multipliers to OSRM's "ideal" times
+            let durationMultiplier = 1;
+            if (activeMode === 'driving') durationMultiplier = 2.0; // Account for traffic, lights, and breaks
+            else if (activeMode === 'bicycle') durationMultiplier = 1.2;
+            else if (activeMode === 'foot') durationMultiplier = 1.1;
+            
+            const realDurationSeconds = route.duration * durationMultiplier;
+            const mins = Math.round(realDurationSeconds / 60);
             const hrs = Math.floor(mins / 60);
             osrmDuration = hrs > 0 ? `${hrs}h ${mins % 60}m` : `${mins}m`;
             osrmDistance = `${(route.distance / 1000).toFixed(1)} km`;
