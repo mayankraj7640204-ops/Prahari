@@ -31,7 +31,6 @@ export function ItineraryPlannerPage() {
   const [completedItems, setCompletedItems] = useState<Set<string>>(() => new Set(JSON.parse(sessionStorage.getItem('itinerary_completed') || '[]')));
   const [expandedDays, setExpandedDays] = useState<Set<number>>(() => new Set(JSON.parse(sessionStorage.getItem('itinerary_expanded') || '[1]'))); // Default expand day 1
   const [flightAdvice, setFlightAdvice] = useState<string | null>(() => sessionStorage.getItem('itinerary_flight') || null);
-  const [flightAdvice, setFlightAdvice] = useState<string | null>(() => sessionStorage.getItem('itinerary_flight') || null);
 
   useEffect(() => { sessionStorage.setItem('itinerary_dest', destination); }, [destination]);
   useEffect(() => { sessionStorage.setItem('itinerary_days', String(days)); }, [days]);
@@ -46,7 +45,6 @@ export function ItineraryPlannerPage() {
   }, [flightAdvice]);
 
   const handleGenerate = async () => {
-    if (!destination.trim()) {
     if (!destination.trim()) {
       return;
     }
