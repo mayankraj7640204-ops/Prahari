@@ -31,7 +31,7 @@ export function ItineraryPlannerPage() {
   const [completedItems, setCompletedItems] = useState<Set<string>>(() => new Set(JSON.parse(sessionStorage.getItem('itinerary_completed') || '[]')));
   const [expandedDays, setExpandedDays] = useState<Set<number>>(() => new Set(JSON.parse(sessionStorage.getItem('itinerary_expanded') || '[1]'))); // Default expand day 1
   const [flightAdvice, setFlightAdvice] = useState<string | null>(() => sessionStorage.getItem('itinerary_flight') || null);
-  const [error, setError] = useState<string | null>(null);
+  const [flightAdvice, setFlightAdvice] = useState<string | null>(() => sessionStorage.getItem('itinerary_flight') || null);
 
   useEffect(() => { sessionStorage.setItem('itinerary_dest', destination); }, [destination]);
   useEffect(() => { sessionStorage.setItem('itinerary_days', String(days)); }, [days]);
@@ -47,11 +47,10 @@ export function ItineraryPlannerPage() {
 
   const handleGenerate = async () => {
     if (!destination.trim()) {
-      setError("Please enter a destination.");
+    if (!destination.trim()) {
       return;
     }
     
-    setError(null);
     setIsGenerating(true);
     setItinerary([]);
     setChecklist([]);
@@ -84,18 +83,12 @@ Do not use markdown blocks. OUTPUT RAW JSON ONLY.`;
         setItinerary(data.itinerary);
         setChecklist(data.checklist);
         if (data.flight_advice) setFlightAdvice(data.flight_advice);
-        
-        // Hide the fallback warning banner on success
-        setError(null);
       } else {
         throw new Error("Invalid response format from AI - missing required keys.");
       }
       
     } catch (err: any) {
       console.error("AI Generation Error (Raw):", err);
-      
-      // Fallback triggers silently without showing an error banner to keep the UI clean
-      setError(null);
       
       // Graceful degradation fallback with destination awareness
       setItinerary(Array.from({ length: days }).map((_, i) => ({
@@ -160,12 +153,7 @@ Do not use markdown blocks. OUTPUT RAW JSON ONLY.`;
           </div>
         </div>
 
-        {error && (
-          <div className="bg-amber-500/10 border border-amber-500/20 text-amber-500 px-4 py-3 rounded-xl flex items-center gap-3 text-sm animate-in fade-in shadow-sm">
-            <AlertTriangle className="w-5 h-5 shrink-0" />
-            {error}
-          </div>
-        )}
+
 
         {/* Control Panel */}
         <div className="bg-[#0a0a0a]/60 backdrop-blur-xl border border-white/10 p-6 md:p-8 rounded-3xl shadow-2xl flex flex-col md:flex-row gap-6 items-end text-white">

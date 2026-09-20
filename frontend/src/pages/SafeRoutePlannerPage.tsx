@@ -196,13 +196,18 @@ Return ONLY a valid JSON object in exactly this format:
   "color_code": "#22c55e", 
   "estimated_time": "String with time estimate", 
   "warnings": ["warning 1", "warning 2"],
-  "important_stops": [ {"name": "Stop Name", "description": "Why to stop", "type": "food|sightseeing|rest"} ]
+  "important_stops": [ {"name": "Real-world attraction/waypoint name", "description": "Why to stop", "type": "food|sightseeing|rest"} ]
 }
+CRUCIAL: The 'important_stops' MUST be real-world major attractions, historical landmarks, safety checkpoints, or prominent waypoints located geographically between ${origin} and ${destination}. DO NOT use generic placeholders like "Midpoint Rest Stop" or "Local Restaurant".
 Color Rules: green (#22c55e) for score >75, yellow (#eab308) for 40-75, red (#ef4444) for <40. For flights, include layover airports and visa requirements as warnings. Return RAW JSON without any markdown formatting.`;
 
       try {
         const aiText = await generateGeminiContentWithRetry(systemPrompt);
-        const cleaned = aiText.replace(/```json/gi, '').replace(/```/g, '').trim();
+        
+        // Robust JSON extraction
+        const jsonMatch = aiText.match(/\{[\s\S]*\}/);
+        const cleaned = jsonMatch ? jsonMatch[0] : aiText.replace(/```json/gi, '').replace(/```/g, '').trim();
+        
         const parsedAnalysis = JSON.parse(cleaned);
         setAnalysis(parsedAnalysis);
       } catch (aiErr) {
@@ -221,8 +226,8 @@ Color Rules: green (#22c55e) for score >75, yellow (#eab308) for 40-75, red (#ef
         } else {
           if (distKm > 200) warnings.push("Long drive ahead — take breaks every 2 hours to stay alert.");
           if (distKm > 500) warnings.push("Consider refueling midway. Check fuel station availability on your route.");
-          stops.push({ name: `Midpoint Rest Stop`, description: "Take a break, stretch, and hydrate.", type: "rest" });
-          stops.push({ name: `Local Restaurant`, description: "Try local cuisine along the route.", type: "food" });
+          stops.push({ name: `${origin} Highway Outskirts`, description: "Final chance to restock essentials before the long stretch.", type: "rest" });
+          stops.push({ name: `Regional Cuisine Hub near ${destination}`, description: "Experience local dining along the approach route.", type: "food" });
         }
         stops.push({ name: `${destination} Arrival`, description: "Your final destination — enjoy your stay!", type: "sightseeing" });
 
