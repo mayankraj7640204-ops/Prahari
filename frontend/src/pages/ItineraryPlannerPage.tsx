@@ -60,12 +60,12 @@ export function ItineraryPlannerPage() {
     setExpandedDays(new Set([1]));
     
     try {
-      const prompt = `You are a fast travel AI. User travels FROM Ranchi, India TO ${destination} for ${days} days. Prefs: ${preferences || 'general'}. 
-Return ONLY a valid JSON object with THREE keys:
-1. 'itinerary': Array [{ "day": 1, "theme": "Short title", "activities": ["Short act 1", "Short act 2"] }]. KEEP ACTIVITIES EXTREMELY CONCISE (under 10 words). Max 3 activities per day.
-2. 'checklist': Array [{ "id": "uuid1", "item": "Item", "context": "Brief reason" }]. LIMIT TO EXACTLY 5 HIGH-PRIORITY ITEMS to save generation time.
-3. 'flight_advice': 1 short sentence on best flight route from Ranchi.
-Do not use markdown blocks. OUTPUT RAW JSON ONLY. BE AS CONCISE AS POSSIBLE to maximize speed.`;
+      const prompt = `You are an expert travel AI. The user is traveling FROM Ranchi, India TO ${destination} for ${days} days. Preferences: ${preferences || 'general'}.
+Return ONLY a valid JSON object with exactly THREE keys:
+1. 'itinerary': Array [{ "day": 1, "theme": "Theme of the day", "activities": ["Rich detail 1", "Rich detail 2"] }]. Make the day-by-day breakdown rich, detailed, and highly tailored to ${destination} and the user's preferences. Max 3-4 activities per day.
+2. 'checklist': Array [{ "id": "uuid", "item": "Document/Item Name", "context": "Detailed explanation" }]. THIS IS CRITICAL: The checklist MUST include exact real-world entry requirements for Indian citizens traveling to ${destination} (e.g., specific visas, MDAC for Malaysia, SG Arrival Card for Singapore, specific climate gear). Limit to top 5-6 most crucial items.
+3. 'flight_advice': 1 short sentence on the most efficient flight route from Ranchi to ${destination}.
+Do not use markdown blocks. OUTPUT RAW JSON ONLY.`;
 
       const responseText = await generateGeminiContentWithRetry(prompt);
 
@@ -97,18 +97,24 @@ Do not use markdown blocks. OUTPUT RAW JSON ONLY. BE AS CONCISE AS POSSIBLE to m
       // Fallback triggers silently without showing an error banner to keep the UI clean
       setError(null);
       
-      // Graceful degradation fallback
+      // Graceful degradation fallback with destination awareness
       setItinerary(Array.from({ length: days }).map((_, i) => ({
         day: i + 1,
-        theme: `Explore ${destination} - Area ${i + 1}`,
-        activities: ["Visit local landmarks", "Try regional cuisine", "Relax and take photos"]
+        theme: `Explore ${destination} - Highlight ${i + 1}`,
+        activities: [
+          `Visit the most iconic cultural and historical sites in ${destination}`,
+          `Experience regional authentic cuisine popular in ${destination}`,
+          `Relax at a highly-rated local spot tailored to your preferences`
+        ]
       })));
       setChecklist([
-        { id: "1", item: "Passport & ID", context: "Required for travel" },
-        { id: "2", item: "Weather Gear", context: "Check local forecast" },
-        { id: "3", item: "Emergency Cash", context: "Always keep backups" },
+        { id: "1", item: "Passport & Valid Visa", context: `Check official entry requirements for Indian citizens visiting ${destination}.` },
+        { id: "2", item: "Digital Arrival Card", context: `Many countries (e.g., Malaysia, Singapore) require digital forms 3 days prior.` },
+        { id: "3", item: "Local Currency / Forex", context: `Ensure your travel cards work seamlessly in ${destination}.` },
+        { id: "4", item: "Weather-Appropriate Gear", context: `Check the current climate for ${destination} and pack accordingly.` },
+        { id: "5", item: "Universal Adapter", context: `Required for charging electronics in foreign sockets.` },
       ]);
-      setFlightAdvice(`Standard flight recommendations to ${destination} from your local hub.`);
+      setFlightAdvice(`Standard international flight connections to ${destination} via major hubs (DEL/CCU).`);
     } finally {
       setIsGenerating(false);
     }
