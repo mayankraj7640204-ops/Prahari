@@ -1,49 +1,31 @@
-# 🛡️ Prahari | Smart Tourist Safety Monitoring System
+🛡️ Prahari: Advanced Tourist Safety & Heritage Navigation Ecosystem
+Smart Travel Logistics, Automated Geo-Fencing, and AI-Driven Incident Response
 
-<div align="center">
-  <img src="https://img.shields.io/badge/SIH-2026-orange.svg" alt="SIH" />
-  <img src="https://img.shields.io/badge/React-20232A?style=flat&logo=react&logoColor=61DAFB" alt="React" />
-  <img src="https://img.shields.io/badge/TypeScript-007ACC?style=flat&logo=typescript&logoColor=white" alt="TypeScript" />
-  <img src="https://img.shields.io/badge/Tailwind_CSS-38B2AC?style=flat&logo=tailwind-css&logoColor=white" alt="Tailwind CSS" />
-  <img src="https://img.shields.io/badge/Supabase-3ECF8E?style=flat&logo=supabase&logoColor=white" alt="Supabase" />
-</div>
+Built for Smart India Hackathon (SIH 2026)
 
-<br />
-
-**Prahari** (The Guardian) is an AI-powered, decentralized tourist safety companion and regional monitoring dashboard. Developed for the **Smart India Hackathon**, this platform provides a seamless safety net for tourists exploring the North Eastern Region (NER) of India using Geo-Fencing, predictive AI, and Blockchain-based Digital IDs.
-
-### 🏢 Problem Statement
-**Ministry:** Ministry of Development of North Eastern Region  
-**Task:** Smart Tourist Safety Monitoring & Incident Response System using AI, Geo-Fencing, and Blockchain-based Digital ID.
-
----
-
-## ✨ Core Features
-
-The platform features a dual-interface system connected to a unified real-time database, ensuring tourists feel safe while authorities have the data they need to act swiftly.
-
-### 🎒 Tourist Companion App (User View)
-Designed with a calming, organic, and premium aesthetic to provide reassurance without feeling intrusive.
-* **Live Geo-Fence Map:** Real-time spatial tracking overlaying tourist movement against geofenced administrative borders, safe corridors, and restricted zones.
-* **Blockchain Digital Pass (ILP):** Instant QR-code access to verified Inner Line Permits and travel credentials stored securely on the blockchain.
-* **AI Incident Sentinel:** Predictive hazard alerts warning travelers of localized weather extremes, roadblocks, or route deviations.
-* **One-Tap Emergency SOS:** Direct incident reporting interface with automated audio/location pinging to regional dispatchers.
-* **Community & Offline Beacon:** Mesh-network/SMS-based offline check-ins for remote valleys where cell reception drops.
-
-### 🚨 Authority Command Center (Admin View)
-A sleek, high-contrast, industrial-grade monitoring dashboard for police forces and tourism officers.
-* **Macro Threat Map:** Interactive heatmap displaying tourist density concentrations, geo-fence breaches, and real-time response unit locations.
-* **SOS Incident Dispatch Queue:** High-priority incoming distress signals ranked by AI-assessed severity scores for immediate action.
-* **Permit Verification Hub:** Live feed of pending Blockchain Digital IDs and Inner Line Permits requiring manual authority sign-off.
-* **Live Metrics:** Real-time tracking of active tourists in the region, pending alerts, and system health.
-
----
-
-## 🛠️ Tech Stack
-
-* **Frontend:** React (Vite), TypeScript, Tailwind CSS
-* **Backend as a Service (BaaS):** Supabase (PostgreSQL, Auth, RLS)
-* **Maps & Geo-Fencing:** Mapbox GL / Leaflet
-* **State Management & Data Fetching:** React Query (Optional) / Supabase Client
-
----
+   
+JPG
+📖 The Story of Prahari
+Tourism is one of the world's most vibrant economic drivers, yet navigating remote terrain, dense cultural monuments, and rugged international borders introduces complex safety, compliance, and logistics challenges. Travelers often struggle with fragmented local permits, shifting regional safety regulations, and unexpected emergencies. Meanwhile, local authorities and heritage site managers face severe blind spots in monitoring real-time visitor density, geo-fence breaches, and threat levels.
+Prahari was built to solve this exact divide. Inspired by the Sanskrit word for "Sentinel" or "Guard," Prahari bridges the gap between traveler autonomy and official sector oversight. It is a unified, production-ready ecosystem that combines real-time geographic tracking, cryptographically verified digital permits, and autonomous AI-driven intelligence to guarantee absolute peace of mind for explorers while empowering authorities with centralized command tools.
+👤 Perspective-Based Journey
+🌍 The User Perspective (The Traveler)
+Seamless Digital Onboarding & Compliance: Travelers register securely and instantly receive a cryptographically verified Blockchain Digital Pass (Inner Line Permit) tailored to destination-specific requirements (such as Malaysia MDAC or Japan Visit Japan Web frameworks), ensuring smooth verification at remote checkpoints even offline.   
+JPG
+Intelligent Itinerary Generation: Using the AI Itinerary Planner, users generate custom, destination-aware day-by-day schedules complete with local logistics, historical context, and a Smart Prep gear and document checklist.
+Proactive Safety & Geo-Fencing: The live map continuously monitors the traveler's position, providing instant visual alerts if they drift near restricted zones or hazardous terrain.
+Emergency Preparedness: In critical situations, the Offline Emergency Beacon and SOS system broadcast precise location data to local authorities instantly.
+🏛️ The Admin Perspective (The Authority & Management Dashboard)
+Command Dashboard & Sector Monitoring: Site managers and local authorities get a comprehensive bird's-eye view of active tourist density, sector environmental data, and crowd flow in real-time.
+AI Incident Sentinel: Automated risk assessments continuously analyze regional environmental and security feeds, categorizing sector threat levels (Low, Medium, High) to issue proactive safety briefings.
+Verified Permit Gatekeeping: Officials can validate cryptographic digital passes instantly at entry gates, eliminating paperwork bottlenecks and securing sensitive heritage zones.
+🛠️ Architecture & Tech Stack
+Frontend: Built with React, Vite, and styled with Tailwind CSS for a responsive, high-performance dark-mode interface.
+Backend & Storage: Powered by Supabase for secure user authentication, database synchronization, and real-time records.
+AI & Intelligence Engine: Integrated directly with Google Gemini (gemini-1.5-flash) for ultra-fast, stable generation of custom itineraries, route waypoints, and incident summaries.
+🚀 Key Features
+AI Itinerary Planner: Custom day-by-day routing with dynamic travel logistics and destination-specific entry prep.
+Safe Route Planner: Intelligent routing that calculates safety scores based on distance, transport modes, and real-world geographical waypoints.
+AI Incident Sentinel: Autonomous risk analysis and threat notification streams.
+Blockchain Digital Pass: Tamper-proof, verifiable travel permits with non-blocking offline database sync.
+Offline Emergency Beacon: Robust fallback SOS beacon for remote low-connectivity regions.
