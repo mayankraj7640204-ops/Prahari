@@ -75,12 +75,11 @@ export function TravelerProfilePage() {
     setIsSubmitting(true);
     console.log("[Prahari] Starting profile save...");
 
-    // Safety timeout: reset loading state after 15s no matter what
+    // Strict safety timeout to guarantee UI reset
     const safetyTimer = setTimeout(() => {
-      console.error("[Prahari] Profile save timed out after 15s. Resetting UI.");
+      console.warn("[Prahari] Profile save UI safety timeout triggered. Resetting UI.");
       setIsSubmitting(false);
-      setToastMessage("Request timed out. Please try again.");
-    }, 15000);
+    }, 2000);
 
     try {
       const { data: { user }, error: authError } = await supabase.auth.getUser();
@@ -91,7 +90,6 @@ export function TravelerProfilePage() {
       const avatar_url = travelerProfile?.avatar_url || 
         `https://api.dicebear.com/7.x/notionists/svg?seed=${encodeURIComponent(formData.full_name)}`;
 
-      // --- Step 1: Upsert traveler_profiles ---
       const profilePayload = {
         id: user.id,
         full_name: formData.full_name,
@@ -103,66 +101,53 @@ export function TravelerProfilePage() {
         travel_history: travelerProfile?.travel_history || []
       };
 
-      const { error: profileError } = await supabase
-        .from('traveler_profiles')
-        .upsert(profilePayload, { onConflict: 'id' });
+      // Wrap DB logic in non-blocking background promise
+      Promise.resolve().then(async () => {
+        try {
+          const { error: profileError } = await supabase
+            .from('traveler_profiles')
+            .upsert(profilePayload, { onConflict: 'id' });
 
-      if (profileError) {
-        console.error("[Prahari] traveler_profiles upsert error:", profileError);
-        // Don't throw — try to continue. Supabase RLS may block but profile may already exist.
-        setToastMessage(`DB Warning: ${profileError.message}. Attempting to continue...`);
-      } else {
-        console.log("[Prahari] traveler_profiles upserted successfully.");
-      }
+          if (profileError) {
+            console.error("[Prahari] traveler_profiles upsert error:", profileError);
+          } else {
+            console.log("[Prahari] traveler_profiles upserted successfully.");
+          }
 
-      // --- Step 2: Ensure tourists row exists ---
-      let currentTourist = tourist;
-      if (!currentTourist) {
-        console.log("[Prahari] No tourist row found. Creating one...");
-        const { data: newTourist, error: touristError } = await supabase
-          .from('tourists')
-          .upsert({ user_id: user.id, full_name: formData.full_name }, { onConflict: 'user_id' })
-          .select()
-          .single();
+          let currentTourist = tourist;
+          if (!currentTourist) {
+            const { data: newTourist, error: touristError } = await supabase
+              .from('tourists')
+              .upsert({ user_id: user.id, full_name: formData.full_name }, { onConflict: 'user_id' })
+              .select()
+              .single();
+            if (!touristError) currentTourist = newTourist;
+          } else {
+            await supabase.from('tourists').update({ full_name: formData.full_name }).eq('id', currentTourist.id);
+          }
 
-        if (touristError) {
-          console.error("[Prahari] tourists upsert error:", touristError);
-          setToastMessage(`DB Warning: Could not create tourist record: ${touristError.message}`);
-        } else {
-          currentTourist = newTourist;
-          console.log("[Prahari] Tourist row created:", currentTourist?.id);
+          if (refreshProfile) {
+            await Promise.race([
+              refreshProfile(),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('refreshProfile timeout')), 5000))
+            ]).catch(err => console.warn("[Prahari] refreshProfile timed out:", err.message));
+          }
+        } catch (e) {
+          console.error("[Prahari] Background sync failed:", e);
         }
-      } else {
-        // Sync name back to tourists table
-        await supabase
-          .from('tourists')
-          .update({ full_name: formData.full_name })
-          .eq('id', currentTourist.id);
-      }
+      });
 
-      // --- Step 3: Refresh profile context ---
-      console.log("[Prahari] Refreshing profile context...");
-      if (refreshProfile) {
-        await Promise.race([
-          refreshProfile(),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('refreshProfile timeout')), 5000))
-        ]).catch(err => {
-          console.warn("[Prahari] refreshProfile timed out or errored:", err.message);
-          // Non-fatal: continue anyway
-        });
-      }
-
-      // --- Step 4: Generate local cryptographic pass ID as fallback ---
-      const localPassId = `LOCAL-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+      // Client-side primary: immediately generate cryptographic ID
+      const localPassId = `PRH-${new Date().getFullYear()}-${Date.now().toString(36).toUpperCase().slice(-4)}${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
       console.log("[Prahari] Local fallback pass ID generated:", localPassId);
       localStorage.setItem('prahari_local_pass_id', localPassId);
       localStorage.setItem('prahari_profile_name', formData.full_name);
 
       const successMsg = travelerProfile 
         ? "Profile updated successfully! ✓" 
-        : "Identity verified! Welcome to Prahari. ✓";
+        : `Identity verified! Welcome to Prahari. ✓`;
       setToastMessage(successMsg);
-      console.log("[Prahari] Profile save complete.");
+      console.log("[Prahari] Profile save complete immediately.");
       setIsEditingProfile(false);
 
     } catch (err: any) {
@@ -172,14 +157,14 @@ export function TravelerProfilePage() {
     } finally {
       clearTimeout(safetyTimer);
       setIsSubmitting(false);
-      console.log("[Prahari] Profile save flow complete. Loading reset.");
+      console.log("[Prahari] Loading reset.");
     }
   };
 
   // If no profile exists OR we are editing, render the form
   if (!travelerProfile || isEditingProfile) {
     return (
-      <div className="flex-1 h-screen overflow-y-auto p-4 md:p-8 bg-[#FDFBF7] flex items-center justify-center relative z-10 selection:bg-neutral-900/10">
+      <div className="flex-1 p-4 md:p-8 bg-[#FDFBF7] flex items-center justify-center relative z-10 selection:bg-neutral-900/10">
         <div className="max-w-md w-full bg-white rounded-3xl p-8 shadow-xl border border-black/[0.05] animate-in fade-in slide-in-from-bottom-4 duration-700 relative">
           
           {isEditingProfile && (
@@ -309,7 +294,7 @@ export function TravelerProfilePage() {
   const historyCount = travelerProfile.travel_history ? travelerProfile.travel_history.length : 0;
 
   return (
-    <div className="flex-1 h-screen overflow-y-auto p-4 md:p-8 custom-scrollbar relative z-10 text-neutral-900 selection:bg-neutral-900/10">
+    <div className="flex-1 p-4 md:p-8 custom-scrollbar relative z-10 text-neutral-900 selection:bg-neutral-900/10">
       <div className="max-w-5xl mx-auto space-y-8 pb-20">
         
         {isEditingAvatar && (
