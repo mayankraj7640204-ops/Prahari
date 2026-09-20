@@ -198,7 +198,8 @@ export function SafeRoutePlannerPage() {
       // 4. Route generation based on mode
       if (activeMode === 'flight') {
         finalPath = generateArcPath([start.lat, start.lon], [end.lat, end.lon]);
-        const flightHours = distKm / 850; // avg commercial jet speed
+        // Realistic block time: Cruise speed + ~40 mins (0.66 hrs) fixed overhead for taxi/takeoff/landing
+        const flightHours = (distKm / 800) + 0.66; 
         const hrs = Math.floor(flightHours);
         const mins = Math.round((flightHours - hrs) * 60);
         osrmDuration = `~${hrs}h ${mins}m (flight)`;
@@ -219,7 +220,7 @@ export function SafeRoutePlannerPage() {
             activeMode = 'flight';
             autoSwitchedToFlight = true;
             finalPath = generateArcPath([start.lat, start.lon], [end.lat, end.lon]);
-            const flightHours = distKm / 850;
+            const flightHours = (distKm / 800) + 0.66;
             osrmDuration = `~${Math.floor(flightHours)}h ${Math.round((flightHours % 1) * 60)}m (flight)`;
             osrmDistance = `${distKm.toFixed(0)} km`;
             setInfoMsg(`🛫 No land route available between ${origin} and ${destination}. Showing flight path instead.`);
@@ -235,7 +236,7 @@ export function SafeRoutePlannerPage() {
           // OSRM failed — fallback to flight arc
           activeMode = 'flight';
           finalPath = generateArcPath([start.lat, start.lon], [end.lat, end.lon]);
-          const flightHours = distKm / 850;
+          const flightHours = (distKm / 800) + 0.66;
           osrmDuration = `~${Math.floor(flightHours)}h ${Math.round((flightHours % 1) * 60)}m (flight)`;
           osrmDistance = `${distKm.toFixed(0)} km`;
           setInfoMsg(`🛫 Routing service unavailable. Showing flight path.`);
