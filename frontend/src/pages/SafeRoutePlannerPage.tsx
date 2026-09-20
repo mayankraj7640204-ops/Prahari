@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { MapContainer, TileLayer, Marker, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
-import { Car, Footprints, Bike, Train, Navigation2, MapPin, AlertTriangle, Clock, MapPinIcon, Utensils, Camera, Coffee } from 'lucide-react';
+import { Car, Footprints, Bike, Train, Plane, Navigation2, MapPin, AlertTriangle, Clock, MapPinIcon, Utensils, Camera, Coffee, Info } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { generateGeminiContentWithRetry } from '@/lib/gemini';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -35,6 +36,27 @@ function MapUpdater({ path }: { path: [number, number][] }) {
   return null;
 }
 
+// Haversine distance in km between two lat/lon points
+function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// Generate a great-circle arc path for flight visualization
+function generateArcPath(start: [number, number], end: [number, number], numPoints = 50): [number, number][] {
+  const points: [number, number][] = [];
+  for (let i = 0; i <= numPoints; i++) {
+    const t = i / numPoints;
+    const lat = start[0] + (end[0] - start[0]) * t;
+    const lon = start[1] + (end[1] - start[1]) * t;
+    points.push([lat, lon]);
+  }
+  return points;
+}
+
 interface AIAnalysis {
   safety_score: number;
   color_code: string;
@@ -43,26 +65,31 @@ interface AIAnalysis {
   important_stops: Array<{ name: string; description: string; type: string }>;
 }
 
+type TravelMode = 'driving' | 'foot' | 'bicycle' | 'transit' | 'flight';
+
 export function SafeRoutePlannerPage() {
   const [origin, setOrigin] = useState('');
   const [destination, setDestination] = useState('');
-  const [mode, setMode] = useState<'driving' | 'foot' | 'bicycle' | 'transit'>('driving');
+  const [mode, setMode] = useState<TravelMode>('driving');
   
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [infoMsg, setInfoMsg] = useState<string | null>(null);
   
   const [routePath, setRoutePath] = useState<[number, number][]>([]);
   const [analysis, setAnalysis] = useState<AIAnalysis | null>(null);
 
+  // Global geocoding — no country restriction
   const geocode = async (query: string) => {
-    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=in&limit=1`);
+    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`);
     const data = await res.json();
-    if (!data || data.length === 0) throw new Error(`Location not found. Try adding a city or state (e.g., 'Destination, State').`);
-    return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) };
+    if (!data || data.length === 0) throw new Error(`Location "${query}" not found. Try a more specific name (e.g., "Moscow, Russia").`);
+    return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon), displayName: data[0].display_name };
   };
 
   const handleGenerateRoute = async () => {
     setErrorMsg(null);
+    setInfoMsg(null);
     if (!origin.trim() || !destination.trim()) {
       setErrorMsg("Please enter both an origin and a destination.");
       return;
@@ -79,71 +106,134 @@ export function SafeRoutePlannerPage() {
     setRoutePath([]);
 
     try {
-      // 1. Geocode
+      // 1. Geocode both locations globally
       const start = await geocode(origin);
       const end = await geocode(destination);
       
+      // 2. Calculate straight-line distance for geographic intelligence
+      const distKm = haversineDistance(start.lat, start.lon, end.lat, end.lon);
+      let activeMode = mode;
       let finalPath: [number, number][] = [];
       let osrmDuration = "";
-      let osrmDistance = "";
+      let osrmDistance = `${distKm.toFixed(0)} km (straight line)`;
+      let autoSwitchedToFlight = false;
 
-      // 2. Route via OSRM if not transit
-      if (mode === 'transit') {
+      // 3. Geographic Intelligence — auto-detect unreasonable land routes
+      const isIntercontinental = distKm > 3000;
+      const isLongDistance = distKm > 500;
+
+      if (activeMode !== 'flight' && activeMode !== 'transit') {
+        if (isIntercontinental) {
+          // Impossible by car/bike/foot — auto-switch to flight
+          activeMode = 'flight';
+          autoSwitchedToFlight = true;
+          setInfoMsg(`🛫 Auto-switched to Flight mode — ${origin} to ${destination} is ${distKm.toFixed(0)} km apart. Land travel is not feasible across this distance.`);
+        } else if (isLongDistance && (activeMode === 'foot' || activeMode === 'bicycle')) {
+          activeMode = 'driving';
+          setInfoMsg(`⚠️ ${distKm.toFixed(0)} km is too far for ${activeMode === 'foot' ? 'walking' : 'cycling'}. Switched to Driving.`);
+        }
+      }
+
+      // 4. Route generation based on mode
+      if (activeMode === 'flight') {
+        finalPath = generateArcPath([start.lat, start.lon], [end.lat, end.lon]);
+        const flightHours = distKm / 850; // avg commercial jet speed
+        const hrs = Math.floor(flightHours);
+        const mins = Math.round((flightHours - hrs) * 60);
+        osrmDuration = `~${hrs}h ${mins}m (flight)`;
+        osrmDistance = `${distKm.toFixed(0)} km`;
+      } else if (activeMode === 'transit') {
         finalPath = [[start.lat, start.lon], [end.lat, end.lon]];
         osrmDuration = "Varies by transit";
-        osrmDistance = "Direct line";
+        osrmDistance = `${distKm.toFixed(0)} km`;
       } else {
-        const osrmRes = await fetch(`https://router.project-osrm.org/route/v1/${mode}/${start.lon},${start.lat};${end.lon},${end.lat}?overview=full&geometries=geojson`);
-        const osrmData = await osrmRes.json();
-        
-        if (osrmData.code !== 'Ok' || !osrmData.routes || osrmData.routes.length === 0) {
-          throw new Error("Could not calculate route via OSRM.");
+        // Try OSRM for land routes
+        try {
+          const osrmMode = activeMode === 'bicycle' ? 'bike' : activeMode;
+          const osrmRes = await fetch(`https://router.project-osrm.org/route/v1/${osrmMode}/${start.lon},${start.lat};${end.lon},${end.lat}?overview=full&geometries=geojson`);
+          const osrmData = await osrmRes.json();
+          
+          if (osrmData.code !== 'Ok' || !osrmData.routes || osrmData.routes.length === 0) {
+            // OSRM can't route this — likely overseas. Switch to flight.
+            activeMode = 'flight';
+            autoSwitchedToFlight = true;
+            finalPath = generateArcPath([start.lat, start.lon], [end.lat, end.lon]);
+            const flightHours = distKm / 850;
+            osrmDuration = `~${Math.floor(flightHours)}h ${Math.round((flightHours % 1) * 60)}m (flight)`;
+            osrmDistance = `${distKm.toFixed(0)} km`;
+            setInfoMsg(`🛫 No land route available between ${origin} and ${destination}. Showing flight path instead.`);
+          } else {
+            const route = osrmData.routes[0];
+            finalPath = route.geometry.coordinates.map((coord: [number, number]) => [coord[1], coord[0]]);
+            const mins = Math.round(route.duration / 60);
+            const hrs = Math.floor(mins / 60);
+            osrmDuration = hrs > 0 ? `${hrs}h ${mins % 60}m` : `${mins}m`;
+            osrmDistance = `${(route.distance / 1000).toFixed(1)} km`;
+          }
+        } catch (routeErr) {
+          // OSRM failed — fallback to flight arc
+          activeMode = 'flight';
+          finalPath = generateArcPath([start.lat, start.lon], [end.lat, end.lon]);
+          const flightHours = distKm / 850;
+          osrmDuration = `~${Math.floor(flightHours)}h ${Math.round((flightHours % 1) * 60)}m (flight)`;
+          osrmDistance = `${distKm.toFixed(0)} km`;
+          setInfoMsg(`🛫 Routing service unavailable. Showing flight path.`);
         }
-        
-        const route = osrmData.routes[0];
-        // OSRM geojson coordinates are [lon, lat]
-        finalPath = route.geometry.coordinates.map((coord: [number, number]) => [coord[1], coord[0]]);
-        
-        const mins = Math.round(route.duration / 60);
-        const hrs = Math.floor(mins / 60);
-        osrmDuration = hrs > 0 ? `${hrs}h ${mins % 60}m` : `${mins}m`;
-        osrmDistance = `${(route.distance / 1000).toFixed(1)} km`;
       }
-      
+
+      if (autoSwitchedToFlight) {
+        setMode('flight');
+      }
+
       setRoutePath(finalPath);
 
-      // 3. Gemini AI Analysis
-      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-      if (!apiKey) throw new Error("Gemini API key not found.");
-
-      const systemPrompt = `You are a route safety AI. The user is traveling from ${origin} to ${destination} via ${mode}. The calculated distance is ${osrmDistance} and base duration is ${osrmDuration}.
+      // 5. AI Safety Analysis (with robust fallback)
+      const modeLabel = activeMode === 'flight' ? 'commercial flight' : activeMode;
+      const systemPrompt = `You are a route safety AI. The user is traveling from ${origin} to ${destination} via ${modeLabel}. The distance is ${osrmDistance} and estimated duration is ${osrmDuration}.
 Return ONLY a valid JSON object in exactly this format:
 { 
   "safety_score": 0-100, 
   "color_code": "#22c55e", 
-  "estimated_time": "String", 
+  "estimated_time": "String with time estimate", 
   "warnings": ["warning 1", "warning 2"],
   "important_stops": [ {"name": "Stop Name", "description": "Why to stop", "type": "food|sightseeing|rest"} ]
 }
-Color Rules: green >75, yellow 40-75, red <40. Return RAW JSON without any markdown formatting. You MUST return ONLY a raw JSON object. Do not include markdown formatting, backticks, or the word 'json'.`;
+Color Rules: green (#22c55e) for score >75, yellow (#eab308) for 40-75, red (#ef4444) for <40. For flights, include layover airports and visa requirements as warnings. Return RAW JSON without any markdown formatting.`;
 
-      const aiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: systemPrompt }] }]
-        })
-      });
+      try {
+        const aiText = await generateGeminiContentWithRetry(systemPrompt);
+        const cleaned = aiText.replace(/```json/gi, '').replace(/```/g, '').trim();
+        const parsedAnalysis = JSON.parse(cleaned);
+        setAnalysis(parsedAnalysis);
+      } catch (aiErr) {
+        console.warn("[Prahari] AI analysis failed, using smart fallback:", aiErr);
+        // Smart local fallback based on distance and mode
+        const score = activeMode === 'flight' ? 85 : distKm < 100 ? 90 : distKm < 500 ? 75 : 60;
+        const color = score > 75 ? '#22c55e' : score > 40 ? '#eab308' : '#ef4444';
+        const warnings: string[] = [];
+        const stops: AIAnalysis['important_stops'] = [];
 
-      const aiData = await aiRes.json();
-      if (!aiRes.ok) throw new Error(aiData.error?.message || "AI Request failed");
-      
-      let rawText = aiData.candidates[0].content.parts[0].text;
-      rawText = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
-      const parsedAnalysis = JSON.parse(rawText);
-      setAnalysis(parsedAnalysis);
+        if (activeMode === 'flight') {
+          warnings.push(`International travel: Ensure you have a valid passport and any required visas for ${destination}.`);
+          warnings.push("Check airline baggage policies and arrive at the airport at least 3 hours before departure.");
+          stops.push({ name: `${origin} International Airport`, description: "Departure terminal — arrive early for security checks.", type: "rest" });
+          stops.push({ name: `${destination} International Airport`, description: "Arrival terminal — arrange ground transportation in advance.", type: "rest" });
+        } else {
+          if (distKm > 200) warnings.push("Long drive ahead — take breaks every 2 hours to stay alert.");
+          if (distKm > 500) warnings.push("Consider refueling midway. Check fuel station availability on your route.");
+          stops.push({ name: `Midpoint Rest Stop`, description: "Take a break, stretch, and hydrate.", type: "rest" });
+          stops.push({ name: `Local Restaurant`, description: "Try local cuisine along the route.", type: "food" });
+        }
+        stops.push({ name: `${destination} Arrival`, description: "Your final destination — enjoy your stay!", type: "sightseeing" });
+
+        setAnalysis({
+          safety_score: score,
+          color_code: color,
+          estimated_time: osrmDuration,
+          warnings,
+          important_stops: stops
+        });
+      }
       
     } catch (err: any) {
       console.error(err);
@@ -172,7 +262,7 @@ Color Rules: green >75, yellow 40-75, red <40. Return RAW JSON without any markd
             <Navigation2 className="w-7 h-7 text-blue-600" /> Safe Route Planner
           </h1>
           <p className="text-sm font-medium text-[#0a0a0a]/50 mb-8">
-            Ultra-fast, AI-powered safety routing and smart point-of-interest discovery.
+            Ultra-fast, AI-powered safety routing with geographic intelligence.
           </p>
 
           <div className="space-y-4">
@@ -183,7 +273,7 @@ Color Rules: green >75, yellow 40-75, red <40. Return RAW JSON without any markd
                 value={origin}
                 onChange={e => setOrigin(e.target.value)}
                 className="w-full bg-[#f5f5f5] border border-black/5 rounded-2xl pt-8 pb-3 px-4 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#0a0a0a]/10" 
-                placeholder="e.g., Lalpur, Ranchi" 
+                placeholder="e.g., New York, USA" 
               />
             </div>
             
@@ -194,20 +284,21 @@ Color Rules: green >75, yellow 40-75, red <40. Return RAW JSON without any markd
                 value={destination}
                 onChange={e => setDestination(e.target.value)}
                 className="w-full bg-[#f5f5f5] border border-black/5 rounded-2xl pt-8 pb-3 px-4 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#0a0a0a]/10" 
-                placeholder="e.g., Patratu Dam, Jharkhand" 
+                placeholder="e.g., Moscow, Russia" 
               />
             </div>
 
-            <div className="flex gap-2 bg-[#f5f5f5] p-1.5 rounded-2xl">
+            <div className="flex gap-1.5 bg-[#f5f5f5] p-1.5 rounded-2xl">
               {[
-                { id: 'driving', icon: Car, label: 'Driving' },
+                { id: 'driving', icon: Car, label: 'Drive' },
                 { id: 'transit', icon: Train, label: 'Transit' },
-                { id: 'bicycle', icon: Bike, label: 'Cycling' },
-                { id: 'foot', icon: Footprints, label: 'Walking' },
+                { id: 'bicycle', icon: Bike, label: 'Cycle' },
+                { id: 'foot', icon: Footprints, label: 'Walk' },
+                { id: 'flight', icon: Plane, label: 'Flight' },
               ].map(m => (
                 <button
                   key={m.id}
-                  onClick={() => setMode(m.id as any)}
+                  onClick={() => setMode(m.id as TravelMode)}
                   className={cn(
                     "flex-1 flex flex-col items-center justify-center py-2.5 rounded-xl transition-all duration-200",
                     mode === m.id ? "bg-white shadow-sm text-blue-600 border border-black/5" : "text-[#0a0a0a]/40 hover:text-[#0a0a0a] hover:bg-black/5"
@@ -218,6 +309,12 @@ Color Rules: green >75, yellow 40-75, red <40. Return RAW JSON without any markd
                 </button>
               ))}
             </div>
+
+            {infoMsg && (
+              <div className="bg-blue-50 text-blue-700 p-4 rounded-xl text-xs font-bold flex items-start gap-2 border border-blue-100 animate-in fade-in duration-300">
+                <Info className="w-4 h-4 shrink-0 mt-0.5" /> <span>{infoMsg}</span>
+              </div>
+            )}
 
             {errorMsg && (
               <div className="bg-red-50 text-red-600 p-4 rounded-xl text-xs font-bold flex items-center gap-2 border border-red-100">
@@ -244,7 +341,7 @@ Color Rules: green >75, yellow 40-75, red <40. Return RAW JSON without any markd
           {isAnalyzing ? (
              <div className="flex flex-col items-center justify-center h-40 text-neutral-400 space-y-4">
                <div className="w-8 h-8 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin" />
-               <p className="text-xs font-mono tracking-widest uppercase">Gemini AI is analyzing safety...</p>
+               <p className="text-xs font-mono tracking-widest uppercase">Analyzing route safety...</p>
              </div>
           ) : analysis?.important_stops ? (
             <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -290,9 +387,9 @@ Color Rules: green >75, yellow 40-75, red <40. Return RAW JSON without any markd
               <Polyline 
                 positions={routePath} 
                 color={analysis?.color_code || "#3b82f6"} 
-                weight={6} 
+                weight={mode === 'flight' ? 4 : 6} 
                 opacity={0.8}
-                dashArray={mode === 'transit' ? "10, 15" : undefined}
+                dashArray={mode === 'flight' ? "12, 8" : mode === 'transit' ? "10, 15" : undefined}
                 lineCap="round"
                 lineJoin="round"
               />
