@@ -12,7 +12,7 @@ export async function generateGeminiContentWithRetry(
 
   const ai = new GoogleGenAI({ apiKey });
   
-  const model = 'gemini-1.5-flash';
+  const model = 'gemini-2.5-flash';
   const maxRetries = 2;
   let attempt = 0;
   let lastError: any = null;
