@@ -56,6 +56,12 @@ export function TouristLayout() {
   const [activeEta, setActiveEta] = useState<number>(15);
   const isSubmittingRef = useRef(false);
 
+  const [localEmergencyContacts, setLocalEmergencyContacts] = useState([
+    { name: "Local Police", phone: "100", dist: "0.8 km" },
+    { name: "Medical Responders", phone: "108", dist: "1.2 km" },
+    { name: "Highway Safety", phone: "1033", dist: "2.5 km" }
+  ]);
+
   useEffect(() => {
     if (activeSosAlert?.status === 'dispatched') {
       // Calculate initial ETA immediately
@@ -71,6 +77,17 @@ export function TouristLayout() {
       return () => clearInterval(interval);
     }
   }, [activeSosAlert]);
+
+  useEffect(() => {
+    if (activeSosAlert && locationName && locationName !== 'Locating...') {
+      generateGeminiContentWithRetry(
+        `I am currently located at: ${locationName}. I need the 3 most important emergency contacts here (Police, Ambulance, etc). Return ONLY a JSON array in this exact format, with REAL official phone numbers for this specific region/country: [{"name": "Police", "phone": "100", "dist": "0.8 km"}]`
+      ).then(res => {
+        const parsed = JSON.parse(res.replace(/```json/g, '').replace(/```/g, '').match(/\[.*\]/s)?.[0] || '[]');
+        if (parsed.length >= 3) setLocalEmergencyContacts(parsed.slice(0, 3));
+      }).catch(err => console.warn("Failed to fetch local emergency numbers", err));
+    }
+  }, [activeSosAlert, locationName]);
   
   const [formData, setFormData] = useState({
     passport: '',
@@ -241,16 +258,29 @@ export function TouristLayout() {
     setIsProcessingAI(true);
 
     // ============================================================
-    // INSTANT CLIENT-SIDE PASS GENERATION (never blocks on network)
+    // 1. SMART AI LOCATION EXTRACTION
+    // ============================================================
+    let extractedLocation = "Global Destination";
+    try {
+      const responseText = await generateGeminiContentWithRetry(
+        `Itinerary text: "${pendingItinerary}". Extract ONLY the primary destination city and country. Return ONLY a valid JSON object: { "location": "City, Country" }. Example: {"location": "Penang, Malaysia"}`
+      );
+      const jsonStr = responseText?.replace(/```json/g, '').replace(/```/g, '').trim();
+      const parsed = JSON.parse(jsonStr || "{}");
+      if (parsed.location) extractedLocation = parsed.location;
+    } catch (err) {
+      console.warn("AI location extraction failed, using fallback", err);
+      const fallbackMatch = pendingItinerary.match(/(?:to|in|for)\s+([A-Z][a-zA-Z\s,]+?)(?:\s+(?:in|on|at|for|with|and|during|from|this|next)|$|\.)/i);
+      extractedLocation = fallbackMatch ? fallbackMatch[1].trim() : pendingItinerary.substring(0, 30);
+    }
+
+    // ============================================================
+    // 2. INSTANT CLIENT-SIDE PASS GENERATION
     // ============================================================
     const blockchainHash = SHA256(user.id + Date.now().toString() + formData.passport).toString();
     const passSerial = `PRH-2026-${blockchainHash.slice(0, 8).toUpperCase()}`;
     const validFrom = new Date(formData.departureDate).toISOString();
     const validUntil = new Date(formData.returnDate).toISOString();
-
-    // Extract location instantly from the itinerary text (no AI call needed for pass generation)
-    const fallbackMatch = pendingItinerary.match(/(?:to|in|for)\s+([A-Z][a-zA-Z\s,]+)/);
-    let extractedLocation = fallbackMatch ? fallbackMatch[1].trim() : "Global Destination";
 
     // Save pass locally FIRST — UI succeeds instantly
     const localPass = {
@@ -282,20 +312,7 @@ export function TouristLayout() {
         console.log("[Prahari] Background Supabase sync starting...");
 
         // Try AI location extraction in the background to refine the location
-        try {
-          const responseText = await generateGeminiContentWithRetry(
-            `Itinerary: ${pendingItinerary}`,
-            'Extract the primary destination city and country from this itinerary. Return ONLY a valid JSON object in this format: { "location": "City, Country" }.'
-          );
-          const jsonStr = responseText?.replace(/```json/g, '').replace(/```/g, '').trim();
-          const parsed = JSON.parse(jsonStr || "{}");
-          if (parsed.location) {
-            extractedLocation = parsed.location;
-            console.log("[Prahari] AI refined location to:", extractedLocation);
-          }
-        } catch (aiErr) {
-          console.warn("[Prahari] Background AI extraction skipped:", aiErr);
-        }
+        console.log("[Prahari] Using exact location:", extractedLocation);
 
         // Supabase: Lookup or create geo_zone
         let { data: zone } = await supabase
@@ -499,30 +516,16 @@ export function TouristLayout() {
             <div className="flex-1">
               <h3 className="text-xs font-bold uppercase tracking-widest text-red-200 mb-2">Nearby Safety Crews & Stations</h3>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div className="bg-black/20 p-2 rounded border border-white/10 flex flex-col justify-between">
-                  <div className="flex justify-between items-start mb-1">
-                    <div className="text-xs font-bold">Local City Police Patrol</div>
-                    <div className="text-[10px] font-mono text-green-400 font-bold tracking-widest">AVAILABLE</div>
+                {localEmergencyContacts.map((contact, idx) => (
+                  <div key={idx} className="bg-black/20 p-2 rounded border border-white/10 flex flex-col justify-between">
+                    <div className="flex justify-between items-start mb-1">
+                      <div className="text-xs font-bold">{contact.name}</div>
+                      <div className="text-[10px] font-mono text-green-400 font-bold tracking-widest">AVAILABLE</div>
+                    </div>
+                    <div className="text-[10px] text-white/60 font-mono mb-1">{contact.dist} away</div>
+                    <div className="text-[10px] text-yellow-500 font-mono">✆ {contact.phone}</div>
                   </div>
-                  <div className="text-[10px] text-white/60 font-mono mb-1">0.8 km away</div>
-                  <div className="text-[10px] text-yellow-500 font-mono">✆ +91 98765 11111</div>
-                </div>
-                <div className="bg-black/20 p-2 rounded border border-white/10 flex flex-col justify-between">
-                  <div className="flex justify-between items-start mb-1">
-                    <div className="text-xs font-bold">Rapid Medical Responders</div>
-                    <div className="text-[10px] font-mono text-green-400 font-bold tracking-widest">AVAILABLE</div>
-                  </div>
-                  <div className="text-[10px] text-white/60 font-mono mb-1">1.2 km away</div>
-                  <div className="text-[10px] text-yellow-500 font-mono">✆ +91 98765 22222</div>
-                </div>
-                <div className="bg-black/20 p-2 rounded border border-white/10 flex flex-col justify-between">
-                  <div className="flex justify-between items-start mb-1">
-                    <div className="text-xs font-bold">Highway Safety Crew</div>
-                    <div className="text-[10px] font-mono text-green-400 font-bold tracking-widest">AVAILABLE</div>
-                  </div>
-                  <div className="text-[10px] text-white/60 font-mono mb-1">2.5 km away</div>
-                  <div className="text-[10px] text-yellow-500 font-mono">✆ +91 98765 33333</div>
-                </div>
+                ))}
               </div>
               {activeSosAlert.status === 'dispatched' && (
                 <div className="mt-3 p-3 bg-yellow-500/20 border border-yellow-500/50 rounded-lg flex items-center gap-3 animate-pulse">
