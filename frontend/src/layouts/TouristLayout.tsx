@@ -268,7 +268,6 @@ export function TouristLayout() {
     console.log("[Prahari] Digital Pass generated instantly:", passSerial);
 
     // Update UI immediately — close form, show success
-    setGlobalLocation(extractedLocation);
     setShowTravelForm(false);
     sessionStorage.removeItem('pending_itinerary');
     setFormData({ passport: '', departureDate: '', returnDate: '', hotel: '' });
@@ -292,7 +291,6 @@ export function TouristLayout() {
           const parsed = JSON.parse(jsonStr || "{}");
           if (parsed.location) {
             extractedLocation = parsed.location;
-            setGlobalLocation(extractedLocation);
             console.log("[Prahari] AI refined location to:", extractedLocation);
           }
         } catch (aiErr) {
