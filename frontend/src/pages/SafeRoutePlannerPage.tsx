@@ -80,12 +80,60 @@ export function SafeRoutePlannerPage() {
   const [routePath, setRoutePath] = useState<[number, number][]>([]);
   const [analysis, setAnalysis] = useState<AIAnalysis | null>(null);
 
-  // Global geocoding — no country restriction
-  const geocode = async (query: string) => {
-    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`);
-    const data = await res.json();
-    if (!data || data.length === 0) throw new Error(`Location "${query}" not found. Try a more specific name (e.g., "Moscow, Russia").`);
-    return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon), displayName: data[0].display_name };
+  // Smart geocoding with AI typo-correction and disambiguation
+  const geocode = async (query: string, type: 'Origin' | 'Destination') => {
+    let res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5`);
+    let data = await res.json();
+    
+    let usedCorrection = false;
+    let correctedName = query;
+
+    // AI Autocorrect if 0 results
+    if (!data || data.length === 0) {
+       const aiPrompt = `The user searched for a map location "${query}" but OpenStreetMap couldn't find it. It might be misspelled or a local name (e.g. "aasman ranchi"). Return ONLY the correctly spelled, most globally recognized city/place name for this. DO NOT add any other text or quotes.`;
+       try {
+         const aiCorrection = await generateGeminiContentWithRetry(aiPrompt);
+         correctedName = aiCorrection.replace(/["']/g, '').trim();
+         if (correctedName && correctedName.toLowerCase() !== query.toLowerCase()) {
+           res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(correctedName)}&limit=5`);
+           data = await res.json();
+           usedCorrection = true;
+         }
+       } catch(e) {
+         console.warn("AI correction failed", e);
+       }
+    }
+
+    // If STILL 0 results, use Gemini as the ultimate geocoder
+    if (!data || data.length === 0) {
+       const aiPrompt = `The user searched for a map location "${query}". OpenStreetMap couldn't find it. Return ONLY a valid JSON object with the latitude and longitude of this location (or the nearest major city/area if exact isn't known). Format: {"lat": 23.344, "lon": 85.309, "displayName": "Proper Name, City"}`;
+       try {
+         const aiCoord = await generateGeminiContentWithRetry(aiPrompt);
+         const jsonMatch = aiCoord.match(/\{[\s\S]*\}/);
+         if (jsonMatch) {
+            const parsed = JSON.parse(jsonMatch[0]);
+            if (parsed.lat && parsed.lon) {
+               return {
+                 lat: parsed.lat,
+                 lon: parsed.lon,
+                 displayName: parsed.displayName,
+                 usedCorrection: true,
+                 correctedName: parsed.displayName
+               };
+            }
+         }
+       } catch(e) {}
+       throw new Error(`${type} "${query}" not found. Try spelling it differently or adding the city name.`);
+    }
+
+    // Update to exact name to remove ambiguity (e.g. which Pantaloons)
+    return { 
+      lat: parseFloat(data[0].lat), 
+      lon: parseFloat(data[0].lon), 
+      displayName: data[0].display_name,
+      usedCorrection,
+      correctedName
+    };
   };
 
   const handleGenerateRoute = async () => {
@@ -108,9 +156,20 @@ export function SafeRoutePlannerPage() {
     setRoutePath([]);
 
     try {
-      // 1. Geocode both locations globally
-      const start = await geocode(origin);
-      const end = await geocode(destination);
+      // 1. Geocode both locations globally with AI fallback
+      const start = await geocode(origin, 'Origin');
+      const end = await geocode(destination, 'Destination');
+      
+      let infoMessages: string[] = [];
+      
+      // Update inputs to the exact resolved name to remove ambiguity
+      if (start.usedCorrection) infoMessages.push(`Did you mean "${start.correctedName}"? Updated Origin.`);
+      setOrigin(start.displayName.split(',').slice(0, 3).join(', '));
+      
+      if (end.usedCorrection) infoMessages.push(`Did you mean "${end.correctedName}"? Updated Destination.`);
+      setDestination(end.displayName.split(',').slice(0, 3).join(', '));
+      
+      if (infoMessages.length > 0) setInfoMsg(infoMessages.join(' | '));
       
       // 2. Calculate straight-line distance for geographic intelligence
       const distKm = haversineDistance(start.lat, start.lon, end.lat, end.lon);
