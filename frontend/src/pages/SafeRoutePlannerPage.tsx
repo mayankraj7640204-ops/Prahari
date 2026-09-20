@@ -73,6 +73,7 @@ export function SafeRoutePlannerPage() {
   const [mode, setMode] = useState<TravelMode>('driving');
   
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isOfflineMode, setIsOfflineMode] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [infoMsg, setInfoMsg] = useState<string | null>(null);
   
@@ -102,6 +103,7 @@ export function SafeRoutePlannerPage() {
     }
 
     setIsAnalyzing(true);
+    setIsOfflineMode(false);
     setAnalysis(null);
     setRoutePath([]);
 
@@ -198,7 +200,7 @@ Return ONLY a valid JSON object in exactly this format:
   "warnings": ["warning 1", "warning 2"],
   "important_stops": [ {"name": "Real-world attraction/waypoint name", "description": "Why to stop", "type": "food|sightseeing|rest"} ]
 }
-CRUCIAL: The 'important_stops' MUST be real-world major attractions, historical landmarks, safety checkpoints, or prominent waypoints located geographically between ${origin} and ${destination}. DO NOT use generic placeholders like "Midpoint Rest Stop" or "Local Restaurant".
+CRUCIAL: The 'important_stops' MUST be exact named real-world attractions (e.g., 'Thean Hou Temple', 'Grand Canyon National Park'), historical landmarks, or prominent waypoints located exactly between ${origin} and ${destination}. DO NOT use generic placeholders like 'Midpoint Rest Stop', 'Highway Outskirts', or 'Regional Cuisine Hub'.
 Color Rules: green (#22c55e) for score >75, yellow (#eab308) for 40-75, red (#ef4444) for <40. For flights, include layover airports and visa requirements as warnings. Return RAW JSON without any markdown formatting.`;
 
       try {
@@ -212,6 +214,7 @@ Color Rules: green (#22c55e) for score >75, yellow (#eab308) for 40-75, red (#ef
         setAnalysis(parsedAnalysis);
       } catch (aiErr) {
         console.warn("[Prahari] AI analysis failed, using smart fallback:", aiErr);
+        setIsOfflineMode(true);
         // Smart local fallback based on distance and mode
         const score = activeMode === 'flight' ? 85 : distKm < 100 ? 90 : distKm < 500 ? 75 : 60;
         const color = score > 75 ? '#22c55e' : score > 40 ? '#eab308' : '#ef4444';
@@ -226,8 +229,8 @@ Color Rules: green (#22c55e) for score >75, yellow (#eab308) for 40-75, red (#ef
         } else {
           if (distKm > 200) warnings.push("Long drive ahead — take breaks every 2 hours to stay alert.");
           if (distKm > 500) warnings.push("Consider refueling midway. Check fuel station availability on your route.");
-          stops.push({ name: `${origin} Highway Outskirts`, description: "Final chance to restock essentials before the long stretch.", type: "rest" });
-          stops.push({ name: `Regional Cuisine Hub near ${destination}`, description: "Experience local dining along the approach route.", type: "food" });
+          stops.push({ name: `Major Checkpoint outside ${origin}`, description: "Final chance to restock essentials before the long stretch.", type: "rest" });
+          stops.push({ name: `Popular Transit Hub / Diner on route to ${destination}`, description: "Experience local dining along the approach route.", type: "food" });
         }
         stops.push({ name: `${destination} Arrival`, description: "Your final destination — enjoy your stay!", type: "sightseeing" });
 
@@ -263,9 +266,16 @@ Color Rules: green (#22c55e) for score >75, yellow (#eab308) for 40-75, red (#ef
       {/* Left Sidebar (35%) */}
       <div className="w-full md:w-[35%] h-1/2 md:h-full bg-white border-r border-black/5 shadow-xl flex flex-col z-20 overflow-y-auto custom-scrollbar">
         <div className="p-6 md:p-8 shrink-0 border-b border-black/5 bg-white sticky top-0 z-10">
-          <h1 className="font-serif text-3xl font-bold text-[#0a0a0a] mb-2 flex items-center gap-3">
-            <Navigation2 className="w-7 h-7 text-blue-600" /> Safe Route Planner
-          </h1>
+          <div className="flex items-center gap-3 mb-2">
+            <h1 className="font-serif text-3xl font-bold text-[#0a0a0a] flex items-center gap-3">
+              <Navigation2 className="w-7 h-7 text-blue-600" /> Safe Route Planner
+            </h1>
+            {isOfflineMode && (
+              <span className="bg-neutral-200 text-neutral-600 px-3 py-1 rounded-full text-[10px] font-bold tracking-widest uppercase">
+                Offline Mode Active
+              </span>
+            )}
+          </div>
           <p className="text-sm font-medium text-[#0a0a0a]/50 mb-8">
             Ultra-fast, AI-powered safety routing with geographic intelligence.
           </p>

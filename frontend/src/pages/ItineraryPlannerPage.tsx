@@ -26,6 +26,7 @@ export function ItineraryPlannerPage() {
   const [preferences, setPreferences] = useState(() => sessionStorage.getItem('itinerary_prefs') || '');
   
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isOfflineMode, setIsOfflineMode] = useState(false);
   const [itinerary, setItinerary] = useState<ItineraryDay[]>(() => JSON.parse(sessionStorage.getItem('itinerary_data') || '[]'));
   const [checklist, setChecklist] = useState<ChecklistItem[]>(() => JSON.parse(sessionStorage.getItem('itinerary_checklist') || '[]'));
   const [completedItems, setCompletedItems] = useState<Set<string>>(() => new Set(JSON.parse(sessionStorage.getItem('itinerary_completed') || '[]')));
@@ -55,11 +56,12 @@ export function ItineraryPlannerPage() {
     setFlightAdvice(null);
     setCompletedItems(new Set());
     setExpandedDays(new Set([1]));
+    setIsOfflineMode(false);
     
     try {
       const prompt = `You are an expert travel AI. The user is traveling FROM Ranchi, India TO ${destination} for ${days} days. Preferences: ${preferences || 'general'}.
 Return ONLY a valid JSON object with exactly THREE keys:
-1. 'itinerary': Array [{ "day": 1, "theme": "Theme of the day", "activities": ["Rich detail 1", "Rich detail 2"] }]. Make the day-by-day breakdown rich, detailed, and highly tailored to ${destination} and the user's preferences. Max 3-4 activities per day.
+1. 'itinerary': Array [{ "day": 1, "theme": "Theme of the day", "activities": ["Real landmark name 1", "Real restaurant name 2"] }]. Make the day-by-day breakdown rich, detailed, and highly tailored to ${destination} and the user's preferences. Max 3-4 activities per day. CRUCIAL: You MUST specify exact real-world tourist attractions, famous streets, specific temples (e.g., 'Thean Hou Temple'), and named restaurants. Do NOT use generic phrases like 'Explore the city'.
 2. 'checklist': Array [{ "id": "uuid", "item": "Document/Item Name", "context": "Detailed explanation" }]. THIS IS CRITICAL: The checklist MUST include exact real-world entry requirements for Indian citizens traveling to ${destination} (e.g., specific visas, MDAC for Malaysia, SG Arrival Card for Singapore, specific climate gear). Limit to top 5-6 most crucial items.
 3. 'flight_advice': 1 short sentence on the most efficient flight route from Ranchi to ${destination}.
 Do not use markdown blocks. OUTPUT RAW JSON ONLY.`;
@@ -87,16 +89,20 @@ Do not use markdown blocks. OUTPUT RAW JSON ONLY.`;
       
     } catch (err: any) {
       console.error("AI Generation Error (Raw):", err);
+      setIsOfflineMode(true);
       
+      const fallbackActivities = [
+        [`Arrival at ${destination} and check-in`, `Visit the main city square or prominent landmark`, `Evening walk and dinner at a famous local street`],
+        [`Guided tour of the top historical site in ${destination}`, `Lunch at a highly-rated regional restaurant`, `Shopping at the central cultural market`],
+        [`Day trip to a popular scenic/nature spot near ${destination}`, `Experience authentic street food`, `Relax at a cafe tailored to your interest in ${preferences || 'culture'}`],
+        [`Explore hidden gems and local neighborhoods in ${destination}`, `Visit a renowned local museum or gallery`, `Evening entertainment or cultural show`],
+      ];
+
       // Graceful degradation fallback with destination awareness
       setItinerary(Array.from({ length: days }).map((_, i) => ({
         day: i + 1,
-        theme: `Explore ${destination} - Highlight ${i + 1}`,
-        activities: [
-          `Visit the most iconic cultural and historical sites in ${destination}`,
-          `Experience regional authentic cuisine popular in ${destination}`,
-          `Relax at a highly-rated local spot tailored to your preferences`
-        ]
+        theme: `Discover ${destination} - Day ${i + 1}`,
+        activities: fallbackActivities[i % fallbackActivities.length]
       })));
       setChecklist([
         { id: "1", item: "Passport & Valid Visa", context: `Check official entry requirements for Indian citizens visiting ${destination}.` },
@@ -146,8 +152,15 @@ Do not use markdown blocks. OUTPUT RAW JSON ONLY.`;
             <Compass className="w-6 h-6 text-white" />
           </div>
           <div>
+          <div className="flex items-center gap-4">
             <h1 className="font-serif text-3xl md:text-4xl font-bold text-[#0a0a0a]">AI Itinerary Planner</h1>
-            <p className="text-[#0a0a0a]/60 text-sm mt-1 font-medium">Smart Travel Logistics & Automated Scheduling</p>
+            {isOfflineMode && (
+              <span className="bg-neutral-200 text-neutral-600 px-3 py-1 rounded-full text-xs font-bold tracking-widest uppercase">
+                Offline Mode Active
+              </span>
+            )}
+          </div>
+          <p className="text-[#0a0a0a]/60 text-sm mt-1 font-medium">Smart Travel Logistics & Automated Scheduling</p>
           </div>
         </div>
 
