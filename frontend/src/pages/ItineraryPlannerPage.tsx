@@ -94,8 +94,8 @@ Do not use markdown blocks. OUTPUT RAW JSON ONLY. BE AS CONCISE AS POSSIBLE to m
     } catch (err: any) {
       console.error("AI Generation Error (Raw):", err);
       
-      // Provide a more friendly, non-critical notice
-      setError("AI Services experiencing high demand. Loaded a smart offline template.");
+      // Fallback triggers silently without showing an error banner to keep the UI clean
+      setError(null);
       
       // Graceful degradation fallback
       setItinerary(Array.from({ length: days }).map((_, i) => ({
